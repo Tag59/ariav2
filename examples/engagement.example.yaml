@@ -1,0 +1,54 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ARIA — engagement definition (example)
+#
+# This file is the single source of truth for ARIA's scope and rules-of-engagement
+# guardrails. ARIA will NOT start without a valid, signed engagement, a non-empty
+# in-scope list, and at least one enabled category.
+#
+# USE ONLY on systems you own or are authorized IN WRITING to test. The example
+# below targets an ISOLATED lab (DVWA / OWASP Juice Shop / vulnhub VMs).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "Lab demo — isolated vulnerable VMs"
+client: "Self-owned home lab"
+
+# The written authorization that legitimizes the mission. All fields are required
+# and `signed` must be true, otherwise ARIA refuses to start.
+authorization:
+  reference: "SELF-LAB-2026-001"        # contract / mission order reference
+  authorized_by: "Lab owner (myself)"   # who signed the authorization
+  signed: true
+  valid_from: "2026-01-01"              # YYYY-MM-DD, inclusive
+  valid_until: "2026-12-31"             # YYYY-MM-DD, inclusive
+
+# Perimeter. Each entry may be:
+#   - an IPv4/IPv6 address            e.g. 192.168.56.101 , ::1
+#   - a CIDR block                    e.g. 192.168.56.0/24 , 2001:db8::/32
+#   - an exact hostname               e.g. juice.lab.local
+#   - a domain wildcard "*.suffix"    e.g. *.lab.local  (subdomains only, not apex)
+#
+# Rule: an OUT entry always wins over an IN entry (exclusions take precedence).
+# Anything not explicitly in scope is refused.
+scope:
+  in:
+    - 192.168.56.0/24        # the isolated lab subnet (VirtualBox host-only net)
+    - "*.lab.local"          # any lab hostname
+  out:
+    - 192.168.56.1           # the host-only gateway/host machine — never touch
+    - 192.168.56.254         # lab infrastructure box
+
+# Rules of engagement: the categories the operator has enabled.
+# Selectable categories: recon, enumeration, vuln_scan, exploitation, post_exploit.
+# The HARD interdicts — denial_of_service, data_destruction, exfiltration — can
+# NEVER be listed here; ARIA rejects any engagement that tries to enable them.
+#
+# recon and enumeration run automatically; exploitation and post_exploit are
+# intrusive and always require explicit human approval with a dry-run (handled by
+# the approval-tier step, not yet wired).
+rules_of_engagement:
+  allowed_categories:
+    - recon
+    - enumeration
+    - vuln_scan
+    # - exploitation   # enable only for lab targets, triggers human approval
+    # - post_exploit   # lab only

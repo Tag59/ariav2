@@ -1,0 +1,180 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ARIA playbook — Web application (aligned with OWASP WSTG / PTES)
+#
+# A playbook is DECLARATIVE. It encodes phases -> steps -> suggested TYPED actions.
+# The Planner (LLM) reasons INSIDE this frame: it may pick, skip, reorder or loop
+# on steps according to the state of the knowledge graph, but it can only choose
+# actions that exist in the tool registry, and every choice is still subject to:
+#   - scope enforcement    (target must pass engagement.InScope)
+#   - RoE gating           (step.gated_by_roe category must be enabled)
+#   - approval tiers       (step.requires_approval => human validation + dry-run)
+#
+# Field reference (see docs/architecture.md for the full contract):
+#   action            typed action name resolved against the tool registry
+#   category          the action category (recon | enumeration | vuln_scan | ...)
+#   params            bounded parameters passed to the adapter
+#   when              optional condition over the graph; the step is only
+#                     suggested when it holds (illustrative expression syntax)
+#   requires_approval if true, the action needs explicit human approval + dry-run
+#   gated_by_roe      the RoE category that must be enabled for this step to run
+#   rationale         why this step exists (shown to the operator by the Advisor)
+#   refs              WSTG / OWASP / CVE / MITRE references, surfaced in the report
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: web
+target_type: web-app
+description: >-
+  Methodological assessment of a single web application: fingerprint, enumerate
+  surface, identify vulnerabilities, then (only if enabled and approved) confirm
+  a finding in the lab. Recon and enumeration are automatic; anything intrusive
+  is gated behind human approval.
+
+phases:
+  # ── Phase 1 — Recon / fingerprinting ───────────────────────────────────────
+  - id: recon
+    name: "Recon & fingerprinting"
+    steps:
+      - id: http_probe
+        action: http_probe
+        category: recon
+        gated_by_roe: recon
+        requires_approval: false
+        params:
+          follow_redirects: true
+          timeout_seconds: 10
+        rationale: "Confirm the target answers over HTTP/HTTPS and capture status, title and server banner."
+        refs: ["WSTG-INFO-02"]
+
+      - id: tech_fingerprint
+        action: tech_fingerprint
+        category: recon
+        gated_by_roe: recon
+        requires_approval: false
+        when: "service.http == true"
+        params:
+          depth: 1
+        rationale: "Identify frameworks, CMS, languages and versions to steer later steps."
+        refs: ["WSTG-INFO-08", "WSTG-INFO-09"]
+
+      - id: tls_scan
+        action: tls_scan
+        category: recon
+        gated_by_roe: recon
+        requires_approval: false
+        when: "service.https == true"
+        params:
+          check_certificate: true
+        rationale: "Assess TLS configuration, protocol versions and certificate validity."
+        refs: ["WSTG-CRYP-01"]
+
+  # ── Phase 2 — Enumeration ──────────────────────────────────────────────────
+  - id: enumeration
+    name: "Content & surface enumeration"
+    steps:
+      - id: content_discovery
+        action: content_discovery
+        category: enumeration
+        gated_by_roe: enumeration
+        requires_approval: false
+        when: "service.http == true"
+        params:
+          wordlist: "common"          # bounded: named, curated wordlists only
+          extensions: ["php", "txt", "bak", "json"]
+          rate_limit_rps: 20          # bounded to protect the target
+          max_requests: 5000
+        rationale: "Discover directories and files (admin panels, backups, configs) that widen the attack surface."
+        refs: ["WSTG-CONF-04", "WSTG-CONF-05"]
+
+      - id: vhost_enum
+        action: vhost_enum
+        category: enumeration
+        gated_by_roe: enumeration
+        requires_approval: false
+        when: "target.is_hostname == true"
+        params:
+          wordlist: "vhosts-common"
+          rate_limit_rps: 20
+        rationale: "Reveal virtual hosts served from the same IP that may expose additional apps."
+        refs: ["WSTG-INFO-04"]
+
+      - id: web_crawl
+        action: web_crawl
+        category: enumeration
+        gated_by_roe: enumeration
+        requires_approval: false
+        when: "service.http == true"
+        params:
+          max_depth: 3
+          max_pages: 500
+          respect_scope: true
+        rationale: "Map endpoints, parameters and forms to feed vulnerability identification."
+        refs: ["WSTG-INFO-07"]
+
+  # ── Phase 3 — Vulnerability identification ─────────────────────────────────
+  - id: vuln_id
+    name: "Vulnerability identification"
+    steps:
+      - id: header_audit
+        action: header_audit
+        category: vuln_scan
+        gated_by_roe: vuln_scan
+        requires_approval: false
+        when: "service.http == true"
+        params: {}
+        rationale: "Flag missing/weak security headers (CSP, HSTS, X-Frame-Options, cookies flags)."
+        refs: ["WSTG-CONF-07", "WSTG-SESS-02"]
+
+      - id: nuclei_scan
+        action: nuclei_scan
+        category: vuln_scan
+        gated_by_roe: vuln_scan
+        requires_approval: false
+        when: "service.http == true"
+        params:
+          severity: ["low", "medium", "high", "critical"]
+          templates: "safe"          # bounded: non-intrusive template set only
+          rate_limit_rps: 30
+        rationale: "Match the target against curated, non-destructive detection templates."
+        refs: ["WSTG-INFO-08"]
+
+  # ── Phase 4 — Exploitation (GATED: lab only, human approval required) ───────
+  - id: exploitation
+    name: "Exploitation (gated)"
+    steps:
+      - id: sqli_probe
+        action: sqli_probe
+        category: exploitation
+        gated_by_roe: exploitation
+        requires_approval: true      # dry-run shown, human must approve
+        when: "finding.candidate == 'sql_injection'"
+        params:
+          technique: "boolean-blind"
+          confirm_only: true         # confirm existence, no data exfiltration
+          max_requests: 200
+        rationale: "Confirm a candidate SQL injection non-destructively; never dump or alter data."
+        refs: ["WSTG-INPV-05", "CWE-89"]
+
+      - id: xss_probe
+        action: xss_probe
+        category: exploitation
+        gated_by_roe: exploitation
+        requires_approval: true
+        when: "finding.candidate == 'xss'"
+        params:
+          confirm_only: true
+        rationale: "Confirm reflected/stored XSS with a benign proof payload."
+        refs: ["WSTG-INPV-01", "WSTG-INPV-02", "CWE-79"]
+
+  # ── Phase 5 — Reporting ────────────────────────────────────────────────────
+  - id: reporting
+    name: "Reporting"
+    steps:
+      - id: compile_report
+        action: compile_report
+        category: recon            # non-intrusive: reads the graph, writes files
+        gated_by_roe: recon
+        requires_approval: false
+        params:
+          formats: ["markdown", "pdf", "json"]
+        rationale: "Render findings from the knowledge graph into a professional report."
+        refs: []
