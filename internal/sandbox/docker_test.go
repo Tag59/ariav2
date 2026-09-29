@@ -9,12 +9,12 @@ func newTestRunner(t *testing.T) *DockerRunner {
 	t.Helper()
 	r, err := NewDockerRunner(DockerConfig{})
 	if err != nil {
-		t.Fatalf("NewDockerRunner: %v", err)
+		t.Fatalf("NewDockerRunner : %v", err)
 	}
 	return r
 }
 
-// contains reports whether args contains x.
+// contains indique si args contient x.
 func contains(args []string, x string) bool {
 	for _, a := range args {
 		if a == x {
@@ -24,7 +24,7 @@ func contains(args []string, x string) bool {
 	return false
 }
 
-// containsPair reports whether args contains flag immediately followed by value.
+// containsPair indique si args contient flag immédiatement suivi de value.
 func containsPair(args []string, flag, value string) bool {
 	for i := 0; i < len(args)-1; i++ {
 		if args[i] == flag && args[i+1] == value {
@@ -47,65 +47,65 @@ func TestBuildArgsHardening(t *testing.T) {
 	r := newTestRunner(t)
 	args, err := r.buildArgs(Spec{Image: "alpine:3", Argv: []string{"echo", "hi"}})
 	if err != nil {
-		t.Fatalf("buildArgs: %v", err)
+		t.Fatalf("buildArgs : %v", err)
 	}
 
 	if !contains(args, "--rm") {
-		t.Error("missing --rm")
+		t.Error("--rm manquant")
 	}
 	if !containsPair(args, "--cap-drop", "ALL") {
-		t.Error("missing --cap-drop ALL")
+		t.Error("--cap-drop ALL manquant")
 	}
 	if !containsPair(args, "--security-opt", "no-new-privileges") {
-		t.Error("missing no-new-privileges")
+		t.Error("no-new-privileges manquant")
 	}
 	if !contains(args, "--read-only") {
-		t.Error("missing --read-only")
+		t.Error("--read-only manquant")
 	}
 	if !containsPair(args, "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m") {
-		t.Error("missing hardened /tmp tmpfs")
+		t.Error("tmpfs /tmp durci manquant")
 	}
 	if !containsPair(args, "--network", "none") {
-		t.Error("default network must be none")
+		t.Error("le réseau par défaut doit être none")
 	}
 	if !containsPair(args, "--pids-limit", "256") {
-		t.Error("missing default pids-limit")
+		t.Error("pids-limit par défaut manquant")
 	}
 
 	if contains(args, "--privileged") {
-		t.Error("--privileged must never be emitted")
+		t.Error("--privileged ne doit jamais être émis")
 	}
 	if containsPair(args, "--network", "host") {
-		t.Error("host network must never be used")
+		t.Error("le réseau host ne doit jamais être utilisé")
 	}
 
 	img := indexOf(args, "alpine:3")
 	if img < 0 {
-		t.Fatal("image not found in args")
+		t.Fatal("image introuvable dans les arguments")
 	}
 	if img+2 >= len(args) || args[img+1] != "echo" || args[img+2] != "hi" {
-		t.Errorf("argv not passed verbatim after image: %v", args[img:])
+		t.Errorf("argv non passé tel quel après l'image : %v", args[img:])
 	}
 	if contains(args[img:], "--") {
-		t.Error("a bare -- separator must not be injected into the container argv")
+		t.Error("un séparateur -- ne doit pas être injecté dans l'argv du conteneur")
 	}
 }
 
 func TestBuildArgsRejections(t *testing.T) {
 	r := newTestRunner(t)
 	cases := map[string]Spec{
-		"empty image":               {Argv: []string{"echo"}},
-		"empty argv":                {Image: "alpine"},
-		"relative workdir":          {Image: "alpine", Argv: []string{"x"}, WorkdirMount: "relative/dir"},
-		"bad capability":            {Image: "alpine", Argv: []string{"x"}, ExtraCapAdd: []string{"SYS_ADMIN"}},
-		"isolated without name":     {Image: "alpine", Argv: []string{"x"}, Network: NetworkPolicy{Mode: NetIsolated}},
-		"host network via isolated": {Image: "alpine", Argv: []string{"x"}, Network: NetworkPolicy{Mode: NetIsolated, NetworkName: "host"}},
-		"unknown network mode":      {Image: "alpine", Argv: []string{"x"}, Network: NetworkPolicy{Mode: "wide-open"}},
+		"image vide":            {Argv: []string{"echo"}},
+		"argv vide":             {Image: "alpine"},
+		"workdir relatif":       {Image: "alpine", Argv: []string{"x"}, WorkdirMount: "relative/dir"},
+		"capability interdite":  {Image: "alpine", Argv: []string{"x"}, ExtraCapAdd: []string{"SYS_ADMIN"}},
+		"isolé sans nom":        {Image: "alpine", Argv: []string{"x"}, Network: NetworkPolicy{Mode: NetIsolated}},
+		"réseau host via isolé": {Image: "alpine", Argv: []string{"x"}, Network: NetworkPolicy{Mode: NetIsolated, NetworkName: "host"}},
+		"mode réseau inconnu":   {Image: "alpine", Argv: []string{"x"}, Network: NetworkPolicy{Mode: "wide-open"}},
 	}
 	for name, spec := range cases {
 		t.Run(name, func(t *testing.T) {
 			if _, err := r.buildArgs(spec); err == nil {
-				t.Errorf("expected error for %q, got nil", name)
+				t.Errorf("erreur attendue pour %q, obtenu nil", name)
 			}
 		})
 	}
@@ -119,10 +119,10 @@ func TestCapabilityAllowlistNormalization(t *testing.T) {
 		ExtraCapAdd: []string{"cap_net_raw"},
 	})
 	if err != nil {
-		t.Fatalf("buildArgs: %v", err)
+		t.Fatalf("buildArgs : %v", err)
 	}
 	if !containsPair(args, "--cap-add", "NET_RAW") {
-		t.Errorf("expected normalized --cap-add NET_RAW, got %v", args)
+		t.Errorf("attendu --cap-add NET_RAW normalisé, obtenu %v", args)
 	}
 }
 
@@ -131,7 +131,7 @@ func TestWorkdirMountAndNetwork(t *testing.T) {
 		DefaultNetwork: NetworkPolicy{Mode: NetIsolated, NetworkName: "aria-lab"},
 	})
 	if err != nil {
-		t.Fatalf("NewDockerRunner: %v", err)
+		t.Fatalf("NewDockerRunner : %v", err)
 	}
 	abs := "/tmp/ws"
 	if runtime.GOOS == "windows" {
@@ -139,28 +139,28 @@ func TestWorkdirMountAndNetwork(t *testing.T) {
 	}
 	args, err := r.buildArgs(Spec{Image: "alpine", Argv: []string{"x"}, WorkdirMount: abs})
 	if err != nil {
-		t.Fatalf("buildArgs: %v", err)
+		t.Fatalf("buildArgs : %v", err)
 	}
 	if !containsPair(args, "--network", "aria-lab") {
-		t.Error("isolated network name not applied")
+		t.Error("nom du réseau isolé non appliqué")
 	}
 	if !containsPair(args, "-v", abs+":/work:rw") {
-		t.Errorf("workdir mount not applied: %v", args)
+		t.Errorf("montage du workdir non appliqué : %v", args)
 	}
 	if !containsPair(args, "-w", "/work") {
-		t.Error("workdir not set to /work")
+		t.Error("workdir non positionné sur /work")
 	}
 }
 
 func TestNewDockerRunnerDefaultsAndRejections(t *testing.T) {
 	r := newTestRunner(t)
 	if r.cfg.Binary != "docker" || r.cfg.DefaultNetwork.Mode != NetNone {
-		t.Errorf("defaults not applied: %+v", r.cfg)
+		t.Errorf("défauts non appliqués : %+v", r.cfg)
 	}
 	if _, err := NewDockerRunner(DockerConfig{SeccompProfile: "unconfined"}); err == nil {
-		t.Error("seccomp=unconfined must be rejected")
+		t.Error("seccomp=unconfined doit être refusé")
 	}
 	if _, err := NewDockerRunner(DockerConfig{DefaultNetwork: NetworkPolicy{Mode: NetIsolated}}); err == nil {
-		t.Error("isolated default network without a name must be rejected")
+		t.Error("réseau isolé par défaut sans nom doit être refusé")
 	}
 }

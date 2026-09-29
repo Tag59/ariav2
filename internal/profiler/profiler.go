@@ -1,4 +1,4 @@
-// Package profiler classifies a target (web-app, network-host, AD, API,
-// linux-host, windows-host) from initial recon and selects the matching
-// playbook. Implemented in a later step (profiler + 2nd playbook).
+// Package profiler classe une cible (application web / hôte réseau / AD / API /
+// hôte Linux / hôte Windows) à partir de la recon initiale et sélectionne le
+// playbook adapté. Implémenté dans une étape ultérieure (profiler + 2e playbook).
 package profiler

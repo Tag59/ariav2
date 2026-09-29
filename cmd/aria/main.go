@@ -1,11 +1,12 @@
-// Command aria is the ARIA CLI/TUI entrypoint.
+// Command aria est le point d'entrée CLI/TUI d'ARIA.
 //
-// ARIA is a methodological pentest COPILOT: it assists a human operator, it does
-// not replace them. This step-0 entrypoint only demonstrates the first
-// non-negotiable guardrail: ARIA refuses to start without a valid, signed
-// engagement, and offers a scope check against that engagement's perimeter.
+// ARIA est un COPILOTE de pentest méthodologique : il assiste un opérateur humain,
+// il ne le remplace pas. Ce point d'entrée initial ne démontre que le premier
+// garde-fou non négociable : ARIA refuse de démarrer sans un engagement valide et
+// signé, et propose une vérification de scope contre le périmètre de cet engagement.
 //
-// USAGE ONLY on systems you own or are authorized IN WRITING to test.
+// USAGE UNIQUEMENT sur des systèmes que l'on possède ou que l'on est autorisé PAR
+// ÉCRIT à tester.
 package main
 
 import (
@@ -18,47 +19,47 @@ import (
 )
 
 func main() {
-	engPath := flag.String("engagement", "", "path to engagement.yaml (required)")
-	check := flag.String("check", "", "optional: print whether a target is in scope, then exit")
+	engPath := flag.String("engagement", "", "chemin vers engagement.yaml (obligatoire)")
+	check := flag.String("check", "", "optionnel : affiche si une cible est dans le scope, puis quitte")
 	flag.Parse()
 
 	if *engPath == "" {
-		fmt.Fprintln(os.Stderr, "aria: --engagement <engagement.yaml> is required; ARIA will not start without a valid authorization")
+		fmt.Fprintln(os.Stderr, "aria : --engagement <engagement.yaml> est obligatoire ; ARIA ne démarre pas sans autorisation valide")
 		os.Exit(2)
 	}
 
 	eng, err := engagement.Load(*engPath)
 	if err != nil {
-		// No valid engagement => ARIA does not start.
-		fmt.Fprintf(os.Stderr, "aria: refusing to start: %v\n", err)
+		// Pas d'engagement valide => ARIA ne démarre pas.
+		fmt.Fprintf(os.Stderr, "aria : refus de démarrer : %v\n", err)
 		os.Exit(1)
 	}
 
 	if !eng.Authorization.IsActive(time.Now()) {
-		fmt.Fprintln(os.Stderr, "aria: refusing to start: the authorization window is not currently active")
+		fmt.Fprintln(os.Stderr, "aria : refus de démarrer : la fenêtre d'autorisation n'est pas active actuellement")
 		os.Exit(1)
 	}
 
 	in, out := eng.ScopeStrings()
-	fmt.Printf("ARIA — engagement %q loaded and validated.\n", eng.Name)
-	fmt.Printf("  authorized by : %s (ref %s)\n", eng.Authorization.AuthorizedBy, eng.Authorization.Reference)
-	fmt.Printf("  in scope      : %v\n", in)
-	fmt.Printf("  out of scope  : %v\n", out)
-	fmt.Printf("  RoE categories: %v\n", eng.RoE.AllowedCategories)
+	fmt.Printf("ARIA — engagement %q chargé et validé.\n", eng.Name)
+	fmt.Printf("  autorisé par  : %s (réf %s)\n", eng.Authorization.AuthorizedBy, eng.Authorization.Reference)
+	fmt.Printf("  dans le scope : %v\n", in)
+	fmt.Printf("  hors scope    : %v\n", out)
+	fmt.Printf("  catégories RoE: %v\n", eng.RoE.AllowedCategories)
 
 	if *check != "" {
 		ok, err := eng.InScope(*check)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "aria: cannot evaluate target %q: %v\n", *check, err)
+			fmt.Fprintf(os.Stderr, "aria : impossible d'évaluer la cible %q : %v\n", *check, err)
 			os.Exit(1)
 		}
 		if ok {
-			fmt.Printf("IN SCOPE: %s\n", *check)
+			fmt.Printf("DANS LE SCOPE : %s\n", *check)
 		} else {
-			fmt.Printf("OUT OF SCOPE (refused): %s\n", *check)
+			fmt.Printf("HORS SCOPE (refusé) : %s\n", *check)
 		}
 		return
 	}
 
-	fmt.Println("\n(step 0) Orchestrator, profiler, tools, sandbox, LLM and reporting are not wired yet.")
+	fmt.Println("\n(étape en cours) L'orchestrateur, le profiler, le LLM et le reporting ne sont pas encore branchés.")
 }

@@ -2,7 +2,7 @@ package engagement
 
 import "testing"
 
-// buildScope is a helper that compiles a scope or fails the test.
+// buildScope compile un scope ou fait échouer le test.
 func buildScope(t *testing.T, in, out []string) *Scope {
 	t.Helper()
 	s, err := compileScope(ScopeConfig{In: in, Out: out})
@@ -67,9 +67,9 @@ func TestInScopeInvalidTarget(t *testing.T) {
 			t.Errorf("InScope(%q) = true, want false for invalid target", target)
 		}
 		if err == nil && target != "999.999.999.999" {
-			// "999.999.999.999" is a syntactically valid-looking hostname, so it
-			// normalizes but simply matches nothing; the others must error.
-			t.Errorf("InScope(%q) expected an error for a malformed target", target)
+			// "999.999.999.999" ressemble à un nom d'hôte syntaxiquement valide :
+			// il se normalise mais ne correspond à rien ; les autres doivent errer.
+			t.Errorf("InScope(%q) : une erreur était attendue pour une cible mal formée", target)
 		}
 	}
 }
@@ -95,7 +95,7 @@ func TestCompileEntryErrors(t *testing.T) {
 	}
 }
 
-// TestFailClosedOnUnvalidated verifies a zero-value Scope never authorizes.
+// TestFailClosedZeroScope vérifie qu'un Scope à valeur zéro n'autorise jamais.
 func TestFailClosedZeroScope(t *testing.T) {
 	var s Scope
 	got, err := s.InScope("10.0.0.1")

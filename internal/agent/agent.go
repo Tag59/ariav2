@@ -1,4 +1,4 @@
-// Package agent holds the mission state machine and the Planner loop that
-// picks the next TYPED action from the state of the graph and the current
-// playbook. Implemented in a later step (Planner LLM, recon-only first).
+// Package agent contient la machine à états de la mission et la boucle du Planner
+// qui choisit la prochaine action TYPÉE selon l'état du graphe et le playbook
+// courant. Implémenté dans une étape ultérieure (Planner LLM, recon d'abord).
 package agent

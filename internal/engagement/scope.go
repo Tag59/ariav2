@@ -7,20 +7,21 @@ import (
 	"strings"
 )
 
-// Scope is a compiled, ready-to-query representation of the in/out scope. Build
-// it with compileScope; then InScope answers whether a target is authorized.
+// Scope est une représentation compilée et prête à interroger du périmètre
+// in/out. On la construit avec compileScope ; ensuite InScope répond si une cible
+// est autorisée.
 //
-// Decision rule (fail-closed):
-//  1. If the target matches any OUT entry  -> NOT in scope (exclusions win).
-//  2. Else if it matches any IN entry      -> in scope.
-//  3. Otherwise                            -> NOT in scope.
+// Règle de décision (fail-closed) :
+//  1. Si la cible correspond à une entrée OUT -> HORS scope (les exclusions gagnent).
+//  2. Sinon si elle correspond à une entrée IN -> dans le scope.
+//  3. Sinon                                    -> HORS scope.
 type Scope struct {
 	in  []matcher
 	out []matcher
 }
 
-// target is a normalized query: an IP-form target has ip set; a hostname target
-// has ip nil and host set to the lowercase, port/scheme-stripped name.
+// target est une requête normalisée : une cible sous forme d'IP a ip renseigné ;
+// une cible nom d'hôte a ip nil et host mis au nom en minuscules, sans port ni schéma.
 type target struct {
 	raw  string
 	host string
@@ -32,10 +33,10 @@ type matcher interface {
 	fmt.Stringer
 }
 
-// InScope reports whether target is within the authorized perimeter. It fails
-// closed: an unparsable target, or a target matching no in-scope entry, is out
-// of scope. An error is returned only for a malformed target string so callers
-// can log the reason; the boolean is always safe to trust on its own.
+// InScope indique si target est dans le périmètre autorisé. La fonction échoue en
+// mode fermé : une cible illisible, ou une cible ne correspondant à aucune entrée
+// IN, est hors scope. Une erreur n'est renvoyée que pour une chaîne de cible mal
+// formée (pour pouvoir la journaliser) ; le booléen seul est toujours fiable.
 func (s *Scope) InScope(rawTarget string) (bool, error) {
 	t, err := normalizeTarget(rawTarget)
 	if err != nil {
@@ -54,50 +55,51 @@ func (s *Scope) InScope(rawTarget string) (bool, error) {
 	return false, nil
 }
 
-// compileScope turns a raw ScopeConfig into a compiled Scope, validating every
-// entry. An empty in-scope list is rejected: ARIA must never run with no target.
+// compileScope transforme un ScopeConfig brut en Scope compilé, en validant
+// chaque entrée. Une liste in vide est rejetée : ARIA ne doit jamais tourner sans
+// cible.
 func compileScope(cfg ScopeConfig) (*Scope, error) {
 	if len(cfg.In) == 0 {
-		return nil, fmt.Errorf("scope.in is empty: an engagement must define at least one authorized target")
+		return nil, fmt.Errorf("scope.in est vide : un engagement doit définir au moins une cible autorisée")
 	}
 	s := &Scope{}
 	for i, raw := range cfg.In {
 		m, err := compileEntry(raw)
 		if err != nil {
-			return nil, fmt.Errorf("scope.in[%d] %q: %w", i, raw, err)
+			return nil, fmt.Errorf("scope.in[%d] %q : %w", i, raw, err)
 		}
 		s.in = append(s.in, m)
 	}
 	for i, raw := range cfg.Out {
 		m, err := compileEntry(raw)
 		if err != nil {
-			return nil, fmt.Errorf("scope.out[%d] %q: %w", i, raw, err)
+			return nil, fmt.Errorf("scope.out[%d] %q : %w", i, raw, err)
 		}
 		s.out = append(s.out, m)
 	}
 	return s, nil
 }
 
-// compileEntry classifies and compiles a single scope entry.
+// compileEntry classe et compile une entrée de scope.
 func compileEntry(raw string) (matcher, error) {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	if s == "" {
-		return nil, fmt.Errorf("empty entry")
+		return nil, fmt.Errorf("entrée vide")
 	}
 	switch {
-	case strings.Contains(s, "/"): // CIDR block
+	case strings.Contains(s, "/"): // bloc CIDR
 		_, ipnet, err := net.ParseCIDR(s)
 		if err != nil {
-			return nil, fmt.Errorf("invalid CIDR: %w", err)
+			return nil, fmt.Errorf("CIDR invalide : %w", err)
 		}
 		return cidrMatcher{ipnet}, nil
-	case strings.HasPrefix(s, "*."): // domain wildcard
+	case strings.HasPrefix(s, "*."): // wildcard de domaine
 		suffix := strings.TrimSuffix(s[2:], ".")
 		if suffix == "" || strings.ContainsAny(suffix, "*") {
-			return nil, fmt.Errorf("invalid wildcard: expected form *.example.com")
+			return nil, fmt.Errorf("wildcard invalide : forme attendue *.example.com")
 		}
 		if !validHostname(suffix) {
-			return nil, fmt.Errorf("invalid wildcard domain %q", suffix)
+			return nil, fmt.Errorf("domaine wildcard invalide %q", suffix)
 		}
 		return wildcardMatcher{suffix}, nil
 	default:
@@ -106,7 +108,7 @@ func compileEntry(raw string) (matcher, error) {
 		}
 		host := strings.TrimSuffix(s, ".")
 		if !validHostname(host) {
-			return nil, fmt.Errorf("not a valid IP, CIDR, wildcard or hostname")
+			return nil, fmt.Errorf("ni IP, ni CIDR, ni wildcard, ni nom d'hôte valide")
 		}
 		return exactHostMatcher{host}, nil
 	}
@@ -129,8 +131,8 @@ type exactHostMatcher struct{ host string }
 func (m exactHostMatcher) matches(t target) bool { return t.ip == nil && t.host == m.host }
 func (m exactHostMatcher) String() string        { return m.host }
 
-// wildcardMatcher matches any strict subdomain of suffix. "*.example.com"
-// matches "a.example.com" and "a.b.example.com" but NOT the apex "example.com".
+// wildcardMatcher correspond à tout sous-domaine strict de suffix. "*.example.com"
+// correspond à "a.example.com" et "a.b.example.com" mais PAS à l'apex "example.com".
 type wildcardMatcher struct{ suffix string }
 
 func (m wildcardMatcher) matches(t target) bool {
@@ -138,7 +140,7 @@ func (m wildcardMatcher) matches(t target) bool {
 }
 func (m wildcardMatcher) String() string { return "*." + m.suffix }
 
-// --- target normalization ---
+// --- normalisation des cibles ---
 
 var hostnameRE = regexp.MustCompile(`^(?i)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
 
@@ -149,29 +151,30 @@ func validHostname(s string) bool {
 	return hostnameRE.MatchString(s)
 }
 
-// normalizeTarget reduces an arbitrary target string (which may carry a scheme,
-// userinfo, port or path) to a bare host or IP for matching.
+// normalizeTarget réduit une chaîne de cible quelconque (qui peut porter un
+// schéma, un userinfo, un port ou un chemin) à un simple hôte ou IP, pour le
+// matching.
 func normalizeTarget(raw string) (target, error) {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	if s == "" {
-		return target{}, fmt.Errorf("empty target")
+		return target{}, fmt.Errorf("cible vide")
 	}
-	if i := strings.Index(s, "://"); i >= 0 { // strip scheme
+	if i := strings.Index(s, "://"); i >= 0 { // retire le schéma
 		s = s[i+3:]
 	}
-	if i := strings.IndexAny(s, "/?#"); i >= 0 { // strip path/query/fragment
+	if i := strings.IndexAny(s, "/?#"); i >= 0 { // retire chemin/query/fragment
 		s = s[:i]
 	}
-	if i := strings.LastIndex(s, "@"); i >= 0 { // strip userinfo
+	if i := strings.LastIndex(s, "@"); i >= 0 { // retire le userinfo
 		s = s[i+1:]
 	}
-	if h, _, err := net.SplitHostPort(s); err == nil { // strip port when present
+	if h, _, err := net.SplitHostPort(s); err == nil { // retire le port s'il y en a
 		s = h
 	}
-	s = strings.Trim(s, "[]")      // unwrap bracketed IPv6
-	s = strings.TrimSuffix(s, ".") // drop trailing dot on FQDN
+	s = strings.Trim(s, "[]")      // enlève les crochets d'une IPv6
+	s = strings.TrimSuffix(s, ".") // enlève le point final d'un FQDN
 	if s == "" {
-		return target{}, fmt.Errorf("empty target after normalization: %q", raw)
+		return target{}, fmt.Errorf("cible vide après normalisation : %q", raw)
 	}
 	t := target{raw: raw, host: s}
 	if ip := net.ParseIP(s); ip != nil {
@@ -179,7 +182,7 @@ func normalizeTarget(raw string) (target, error) {
 		return t, nil
 	}
 	if !validHostname(s) {
-		return target{}, fmt.Errorf("target %q is neither a valid IP nor hostname", raw)
+		return target{}, fmt.Errorf("la cible %q n'est ni une IP ni un nom d'hôte valide", raw)
 	}
 	return t, nil
 }

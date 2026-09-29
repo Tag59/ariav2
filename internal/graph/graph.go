@@ -1,4 +1,5 @@
-// Package graph is the knowledge graph: hosts, services, technologies,
-// candidate vulnerabilities, evidence and attack paths. It feeds the reasoning
-// and the report. Implemented in a later step (knowledge graph).
+// Package graph est le knowledge graph : hôtes, services, technologies,
+// vulnérabilités candidates, preuves et chemins d'attaque. Il alimente le
+// raisonnement et le rapport. Le modèle de données est dans model.go ; le store
+// (accumulation, fusion, requêtes) viendra dans une étape ultérieure.
 package graph

@@ -1,14 +1,14 @@
-// Package sandbox runs tool adapters in an isolated, disposable container.
+// Package sandbox exécute les adapters d'outils dans un conteneur isolé et jetable.
 //
-// The sandbox is a defense-in-depth layer beneath the scope engine: even though
-// every action is already checked against engagement.InScope before it runs, the
-// container that actually executes a tool is hardened, ephemeral, and — when it
-// needs the network at all — attached only to an isolated network dedicated to
-// the lab, never to the host network.
+// Le bac à sable est une couche de défense en profondeur SOUS le moteur de scope :
+// même si chaque action est déjà vérifiée par engagement.InScope avant de tourner,
+// le conteneur qui exécute réellement un outil est durci, éphémère et — quand il a
+// besoin du réseau — attaché uniquement à un réseau isolé dédié au lab, jamais au
+// réseau de l'hôte.
 //
-// The runtime is abstracted behind Runner so it can be swapped (a hardened
-// Docker runner ships now; a gVisor/runsc or Podman backend can be added later
-// without touching the adapters).
+// Le runtime est abstrait derrière Runner, pour pouvoir en changer (un runner
+// Docker durci est fourni ; un backend gVisor/runsc ou Podman pourra être ajouté
+// plus tard sans toucher aux adapters).
 package sandbox
 
 import (
@@ -16,71 +16,70 @@ import (
 	"time"
 )
 
-// NetMode selects the network exposure of a run.
+// NetMode choisit l'exposition réseau d'une exécution.
 type NetMode string
 
 const (
-	// NetNone gives the container no network at all (--network none). This is the
-	// default and the right choice for tools that only process local input.
+	// NetNone ne donne aucun réseau au conteneur (--network none). C'est le défaut
+	// et le bon choix pour les outils qui ne traitent que des données locales.
 	NetNone NetMode = "none"
-	// NetIsolated attaches the container to a pre-created, isolated Docker network
-	// (NetworkName) dedicated to the lab. Host-side egress filtering to the
-	// authorized scope is applied out of band (see docs); the container never gets
-	// the host network.
+	// NetIsolated attache le conteneur à un réseau Docker isolé préexistant
+	// (NetworkName), dédié au lab. Le filtrage d'egress vers le scope autorisé est
+	// appliqué hors bande (voir docs) ; le conteneur n'obtient jamais le réseau hôte.
 	NetIsolated NetMode = "isolated"
 )
 
-// NetworkPolicy describes how a run may reach the network.
+// NetworkPolicy décrit comment une exécution peut atteindre le réseau.
 type NetworkPolicy struct {
 	Mode NetMode
-	// NetworkName is the name of the isolated Docker network to attach to when
-	// Mode is NetIsolated. It must already exist (created at lab setup).
+	// NetworkName est le nom du réseau Docker isolé auquel s'attacher quand Mode
+	// vaut NetIsolated. Il doit déjà exister (créé à la mise en place du lab).
 	NetworkName string
 }
 
-// Spec is a single, fully-specified execution request. The argv is built by the
-// tool adapter from typed, bounded parameters — never by the LLM, and never a
-// shell string. There is no shell in the container's entrypoint.
+// Spec est une requête d'exécution entièrement spécifiée. L'argv est construit par
+// l'adapter à partir de paramètres typés et bornés — jamais par le LLM, et jamais
+// une chaîne shell. Il n'y a pas de shell dans l'entrypoint du conteneur.
 type Spec struct {
-	// Image is the container image to run. Should be pinned (a digest is best).
+	// Image est l'image conteneur à lancer. Devrait être épinglée (un digest est idéal).
 	Image string
-	// Argv is the entrypoint command and its arguments, passed verbatim to the
-	// container with no shell interpretation.
+	// Argv est la commande d'entrée et ses arguments, passés tels quels au
+	// conteneur sans interprétation shell.
 	Argv []string
-	// Env are additional environment variables, "KEY=value".
+	// Env ajoute des variables d'environnement, sous la forme "CLE=valeur".
 	Env []string
-	// WorkdirMount, if set, is a host directory bind-mounted read-write at /work
-	// as the container's scoped workspace (for tool output). It must be an
-	// absolute path the caller controls.
+	// WorkdirMount, si renseigné, est un répertoire hôte monté en lecture/écriture
+	// à /work comme espace de travail dédié du conteneur (pour la sortie de l'outil).
+	// Il doit être un chemin absolu maîtrisé par l'appelant.
 	WorkdirMount string
-	// Network overrides the runner's default network policy for this run.
-	// The zero value (empty Mode) means "use the runner default".
+	// Network surcharge la politique réseau par défaut du runner pour cette
+	// exécution. La valeur zéro (Mode vide) signifie "utiliser le défaut du runner".
 	Network NetworkPolicy
-	// ExtraCapAdd lists Linux capabilities to add on top of a full cap-drop.
-	// Only a vetted allowlist is accepted (e.g. NET_RAW for SYN scans).
+	// ExtraCapAdd liste les capabilities Linux à ajouter par-dessus un cap-drop
+	// complet. Seule une liste blanche vérifiée est acceptée (ex. NET_RAW).
 	ExtraCapAdd []string
-	// Timeout bounds the run. Zero means the runner's default timeout.
+	// Timeout borne l'exécution. Zéro = timeout par défaut du runner.
 	Timeout time.Duration
 }
 
-// Result is the raw outcome of a run. Adapters PARSE Stdout/Stderr into
-// structured objects; nothing here is handed to the LLM as instructions.
+// Result est le résultat brut d'une exécution. Les adapters PARSENT Stdout/Stderr
+// en objets structurés ; rien ici n'est transmis au LLM comme instruction.
 type Result struct {
 	ExitCode int
 	Stdout   []byte
 	Stderr   []byte
 	Duration time.Duration
-	// TimedOut is true when the run was killed because it exceeded its timeout.
+	// TimedOut vaut true quand l'exécution a été tuée pour dépassement de délai.
 	TimedOut bool
 }
 
-// Runner executes a Spec in an isolated environment.
+// Runner exécute un Spec dans un environnement isolé.
 type Runner interface {
-	// Available returns nil if the runtime is usable right now (binary present
-	// and daemon reachable), or an error explaining why not.
+	// Available renvoie nil si le runtime est utilisable maintenant (binaire
+	// présent et démon joignable), sinon une erreur expliquant pourquoi.
 	Available(ctx context.Context) error
-	// Run executes the spec and returns its result. A non-zero container exit
-	// code is reported in Result.ExitCode, not as an error; err is non-nil only
-	// when the run could not be carried out or a policy check failed.
+	// Run exécute le spec et renvoie son résultat. Un code de sortie non nul du
+	// conteneur est reporté dans Result.ExitCode, pas en tant qu'erreur ; err n'est
+	// non nil que si l'exécution n'a pas pu avoir lieu ou qu'un contrôle a échoué.
 	Run(ctx context.Context, spec Spec) (Result, error)
 }
