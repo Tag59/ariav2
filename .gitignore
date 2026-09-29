@@ -1,0 +1,22 @@
+# Build output
+/aria
+/aria.exe
+/bin/
+/dist/
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Mission artifacts — never commit real engagement data or reports
+/engagement.yaml
+/reports/
+/audit/*.log
+*.local.yaml
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
