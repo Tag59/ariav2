@@ -22,11 +22,11 @@ import "time"
 type Category string
 
 const (
-	CatRecon          Category = "recon"           // passive/light discovery
-	CatEnumeration    Category = "enumeration"     // service & content enumeration
-	CatVulnScan       Category = "vuln_scan"       // vulnerability identification
-	CatExploitation   Category = "exploitation"    // intrusive, requires approval
-	CatPostExploit    Category = "post_exploit"    // lab-only, requires approval
+	CatRecon           Category = "recon"        // passive/light discovery
+	CatEnumeration     Category = "enumeration"  // service & content enumeration
+	CatVulnScan        Category = "vuln_scan"    // vulnerability identification
+	CatExploitation    Category = "exploitation" // intrusive, requires approval
+	CatPostExploit     Category = "post_exploit" // lab-only, requires approval
 	CatDenialOfService Category = "denial_of_service"
 	CatDataDestruction Category = "data_destruction"
 	CatExfiltration    Category = "exfiltration"

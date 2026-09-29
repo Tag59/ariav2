@@ -168,7 +168,7 @@ func normalizeTarget(raw string) (target, error) {
 	if h, _, err := net.SplitHostPort(s); err == nil { // strip port when present
 		s = h
 	}
-	s = strings.Trim(s, "[]")   // unwrap bracketed IPv6
+	s = strings.Trim(s, "[]")      // unwrap bracketed IPv6
 	s = strings.TrimSuffix(s, ".") // drop trailing dot on FQDN
 	if s == "" {
 		return target{}, fmt.Errorf("empty target after normalization: %q", raw)
