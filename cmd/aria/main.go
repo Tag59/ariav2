@@ -15,12 +15,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Tag59/aria/internal/agent"
 	"github.com/Tag59/aria/internal/engagement"
 	"github.com/Tag59/aria/internal/graph"
 	"github.com/Tag59/aria/internal/llm"
+	"github.com/Tag59/aria/internal/playbook"
 	"github.com/Tag59/aria/internal/profiler"
 	"github.com/Tag59/aria/internal/sandbox"
 	"github.com/Tag59/aria/internal/tools"
@@ -34,6 +36,7 @@ func main() {
 	network := flag.String("network", "", "réseau Docker isolé pour le scan (ex. aria-lab) ; vide = aucun réseau")
 	image := flag.String("image", "aria/nmap:latest", "image conteneur pour port_scan")
 	maxSteps := flag.Int("max-steps", 8, "nombre maximum d'actions de reconnaissance")
+	playbooksDir := flag.String("playbooks", "playbooks", "dossier des playbooks")
 	flag.Parse()
 
 	if *engPath == "" {
@@ -62,7 +65,7 @@ func main() {
 
 	// Mode 2 : boucle de reconnaissance.
 	if *recon {
-		if err := lancerRecon(eng, *model, *network, *image, *maxSteps); err != nil {
+		if err := lancerRecon(eng, *model, *network, *image, *maxSteps, *playbooksDir); err != nil {
 			fmt.Fprintf(os.Stderr, "aria : %v\n", err)
 			os.Exit(1)
 		}
@@ -97,7 +100,7 @@ func verifierCible(eng *engagement.Engagement, cible string) {
 }
 
 // lancerRecon assemble tous les composants et exécute la boucle recon + analyse.
-func lancerRecon(eng *engagement.Engagement, model, network, image string, maxSteps int) error {
+func lancerRecon(eng *engagement.Engagement, model, network, image string, maxSteps int, playbooksDir string) error {
 	ctx := context.Background()
 
 	// Politique réseau du bac à sable : aucun réseau par défaut (sûr), ou un
@@ -136,13 +139,8 @@ func lancerRecon(eng *engagement.Engagement, model, network, image string, maxSt
 		fmt.Printf("  • %s %v (exit %d, %d hôte(s)) — %s\n", s.Action, s.Targets, s.ExitCode, s.HostsFound, s.Rationale)
 	}
 
-	fmt.Println("\n→ Profilage des hôtes...")
-	for _, prof := range profiler.ClassifyStore(store) {
-		fmt.Printf("  • %s\n", prof)
-		for _, r := range prof.Reasons {
-			fmt.Printf("      - %s\n", r)
-		}
-	}
+	fmt.Println("\n→ Profilage et plan méthodologique...")
+	afficherProfilsEtPlan(store, eng, playbooksDir)
 
 	fmt.Println("\n→ Analyse des services découverts...")
 	analyst := agent.NewAnalyst(client)
@@ -152,6 +150,47 @@ func lancerRecon(eng *engagement.Engagement, model, network, image string, maxSt
 
 	afficherGraph(store)
 	return nil
+}
+
+// afficherProfilsEtPlan classe chaque hôte et affiche, via le playbook recommandé,
+// le plan méthodologique applicable (steps dont la condition when tient et dont la
+// catégorie est autorisée par les RoE).
+func afficherProfilsEtPlan(store *graph.Store, eng *engagement.Engagement, playbooksDir string) {
+	cache := map[string]*playbook.Playbook{}
+	for _, prof := range profiler.ClassifyStore(store) {
+		fmt.Printf("  • %s\n", prof)
+		for _, r := range prof.Reasons {
+			fmt.Printf("      - %s\n", r)
+		}
+		if prof.Playbook == "" {
+			continue
+		}
+		pb := cache[prof.Playbook]
+		if pb == nil {
+			loaded, err := playbook.Load(filepath.Join(playbooksDir, prof.Playbook))
+			if err != nil {
+				fmt.Printf("      (playbook %s non chargé : %v)\n", prof.Playbook, err)
+				continue
+			}
+			pb = loaded
+			cache[prof.Playbook] = pb
+		}
+		host, ok := store.Host(prof.Host)
+		if !ok {
+			continue
+		}
+		plan := playbook.NewEngine(pb, eng.RoE).PlanForHost(host)
+		for _, ph := range plan {
+			fmt.Printf("      Phase « %s » :\n", ph.Name)
+			for _, st := range ph.Steps {
+				marque := ""
+				if st.RequiresApproval {
+					marque = " [approbation requise]"
+				}
+				fmt.Printf("        - %s%s\n", st.Action, marque)
+			}
+		}
+	}
 }
 
 // afficherGraph imprime les hôtes/services et les findings accumulés.
