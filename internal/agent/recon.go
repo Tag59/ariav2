@@ -9,14 +9,15 @@ import (
 	"github.com/Tag59/aria/internal/tools"
 )
 
-// Step consigne une action de reconnaissance exécutée, pour l'inspection et (plus
-// tard) le journal d'audit.
+// Step consigne une action tentée, pour l'inspection et (plus tard) le journal
+// d'audit.
 type Step struct {
 	Action     string
 	Targets    []string
 	Rationale  string
 	ExitCode   int
 	HostsFound int
+	Status     string // "exécuté" ou "refusé" (par l'opérateur / faute d'approbateur)
 }
 
 // RunRecon fait tourner la boucle de reconnaissance : le Planner propose une
@@ -78,6 +79,7 @@ func (p *Planner) RunRecon(ctx context.Context, store *graph.Store, runner sandb
 			Rationale:  d.Rationale,
 			ExitCode:   res.ExitCode,
 			HostsFound: len(out.Hosts),
+			Status:     "exécuté",
 		})
 	}
 

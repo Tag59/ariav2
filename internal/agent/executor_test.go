@@ -77,16 +77,25 @@ func TestExecutePlaybook(t *testing.T) {
 		findings: []graph.Finding{{Host: "10.0.0.5", Port: 3000, Title: "XSS", Severity: "medium"}},
 	})
 	store := graph.NewStore()
-	exec := NewExecutor(reg, eng, &fakeRunner{})
+	exec := NewExecutor(reg, eng, &fakeRunner{}, AutoDeny{})
 
 	steps, err := exec.ExecutePlaybook(context.Background(), store, hostHTTP(), playbookExec())
 	if err != nil {
 		t.Fatalf("ExecutePlaybook : %v", err)
 	}
-	// Un seul step exécuté : le step intrusif (requires_approval) et le step sans
-	// adapter sont ignorés.
-	if len(steps) != 1 || steps[0].Action != "nuclei_scan" {
-		t.Fatalf("attendu 1 step (nuclei_scan), obtenu %+v", steps)
+	// Un seul step EXÉCUTÉ (le nuclei_scan auto) ; le step requires_approval est
+	// refusé (AutoDeny) et le step sans adapter est ignoré.
+	var executes, refuses int
+	for _, s := range steps {
+		switch s.Status {
+		case "exécuté":
+			executes++
+		case "refusé":
+			refuses++
+		}
+	}
+	if executes != 1 || refuses != 1 {
+		t.Fatalf("attendu 1 exécuté + 1 refusé, obtenu %+v", steps)
 	}
 	if store.Summary().Findings != 1 {
 		t.Errorf("attendu 1 finding ingéré, obtenu %d", store.Summary().Findings)
@@ -99,9 +108,116 @@ func TestExecutePlaybookRefuseHorsScope(t *testing.T) {
 	reg := tools.NewRegistry()
 	_ = reg.Register(fakeTool{nom: "nuclei_scan", cat: engagement.CatVulnScan})
 	store := graph.NewStore()
-	exec := NewExecutor(reg, eng, &fakeRunner{})
+	exec := NewExecutor(reg, eng, &fakeRunner{}, AutoDeny{})
 
 	if _, err := exec.ExecutePlaybook(context.Background(), store, hostHTTP(), playbookExec()); err == nil {
 		t.Error("attendu un refus de scope pour un hôte hors périmètre")
+	}
+}
+
+// fakeApprover répond toujours ok, et enregistre les dry-runs reçus.
+type fakeApprover struct {
+	ok  bool
+	vus []DryRun
+}
+
+func (f *fakeApprover) Approve(dr DryRun) (bool, error) {
+	f.vus = append(f.vus, dr)
+	return f.ok, nil
+}
+
+func engagementExpl(t *testing.T) *engagement.Engagement {
+	t.Helper()
+	yml := `
+name: test
+authorization: {reference: r, authorized_by: a, signed: true, valid_from: "2026-01-01", valid_until: "2026-12-31"}
+scope: {in: ["10.0.0.0/24"]}
+rules_of_engagement: {allowed_categories: [recon, enumeration, vuln_scan, exploitation]}
+`
+	eng, err := engagement.ParseAndValidate([]byte(yml))
+	if err != nil {
+		t.Fatalf("engagement : %v", err)
+	}
+	return eng
+}
+
+func playbookExpl() *playbook.Playbook {
+	return &playbook.Playbook{
+		Name: "t", TargetType: "web-app",
+		Phases: []playbook.Phase{
+			{ID: "expl", Name: "Exploitation", Steps: []playbook.Step{
+				{ID: "sqli", Action: "sqli_probe", GatedByRoE: "exploitation", When: "service.http == true", RequiresApproval: true},
+			}},
+		},
+	}
+}
+
+func TestExecuteApprobationRefusee(t *testing.T) {
+	eng := engagementExpl(t)
+	reg := tools.NewRegistry()
+	_ = reg.Register(fakeTool{
+		nom: "sqli_probe", cat: engagement.CatExploitation, approval: true,
+		findings: []graph.Finding{{Title: "SQLi", Severity: "high"}},
+	})
+	store := graph.NewStore()
+	appr := &fakeApprover{ok: false}
+	exec := NewExecutor(reg, eng, &fakeRunner{}, appr)
+
+	steps, err := exec.ExecutePlaybook(context.Background(), store, hostHTTP(), playbookExpl())
+	if err != nil {
+		t.Fatalf("ExecutePlaybook : %v", err)
+	}
+	if len(appr.vus) != 1 {
+		t.Fatalf("l'approbateur aurait dû être sollicité une fois, obtenu %d", len(appr.vus))
+	}
+	if len(steps) != 1 || steps[0].Status != "refusé" {
+		t.Errorf("step attendu refusé, obtenu %+v", steps)
+	}
+	if store.Summary().Findings != 0 {
+		t.Error("aucun finding ne doit être ingéré si l'action est refusée")
+	}
+}
+
+func TestExecuteApprobationAccordee(t *testing.T) {
+	eng := engagementExpl(t)
+	reg := tools.NewRegistry()
+	_ = reg.Register(fakeTool{
+		nom: "sqli_probe", cat: engagement.CatExploitation, approval: true,
+		findings: []graph.Finding{{Title: "SQLi", Severity: "high"}},
+	})
+	store := graph.NewStore()
+	appr := &fakeApprover{ok: true}
+	exec := NewExecutor(reg, eng, &fakeRunner{}, appr)
+
+	steps, err := exec.ExecutePlaybook(context.Background(), store, hostHTTP(), playbookExpl())
+	if err != nil {
+		t.Fatalf("ExecutePlaybook : %v", err)
+	}
+	if len(steps) != 1 || steps[0].Status != "exécuté" {
+		t.Fatalf("step attendu exécuté, obtenu %+v", steps)
+	}
+	// Le dry-run présenté doit décrire l'action et sa cible.
+	if len(appr.vus) != 1 || appr.vus[0].Action != "sqli_probe" || len(appr.vus[0].Targets) == 0 {
+		t.Errorf("dry-run inattendu : %+v", appr.vus)
+	}
+	if store.Summary().Findings != 1 {
+		t.Error("le finding aurait dû être ingéré après approbation")
+	}
+}
+
+// Sans approbateur (nil → AutoDeny), une action intrusive est refusée.
+func TestExecuteSansApprobateurRefuse(t *testing.T) {
+	eng := engagementExpl(t)
+	reg := tools.NewRegistry()
+	_ = reg.Register(fakeTool{nom: "sqli_probe", cat: engagement.CatExploitation, approval: true})
+	store := graph.NewStore()
+	exec := NewExecutor(reg, eng, &fakeRunner{}, nil) // nil => AutoDeny
+
+	steps, err := exec.ExecutePlaybook(context.Background(), store, hostHTTP(), playbookExpl())
+	if err != nil {
+		t.Fatalf("ExecutePlaybook : %v", err)
+	}
+	if len(steps) != 1 || steps[0].Status != "refusé" {
+		t.Errorf("sans approbateur, l'action intrusive doit être refusée : %+v", steps)
 	}
 }

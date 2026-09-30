@@ -20,14 +20,19 @@ import (
 // ultérieure. Les steps sans adapter enregistré sont sautés (la méthodologie du
 // playbook est plus large que l'outillage disponible).
 type Executor struct {
-	tools  *tools.Registry
-	eng    *engagement.Engagement
-	runner sandbox.Runner
+	tools    *tools.Registry
+	eng      *engagement.Engagement
+	runner   sandbox.Runner
+	approver Approver
 }
 
-// NewExecutor assemble un Executor.
-func NewExecutor(reg *tools.Registry, eng *engagement.Engagement, runner sandbox.Runner) *Executor {
-	return &Executor{tools: reg, eng: eng, runner: runner}
+// NewExecutor assemble un Executor. Si approver est nil, toute action nécessitant
+// une approbation est refusée (fail-closed).
+func NewExecutor(reg *tools.Registry, eng *engagement.Engagement, runner sandbox.Runner, approver Approver) *Executor {
+	if approver == nil {
+		approver = AutoDeny{}
+	}
+	return &Executor{tools: reg, eng: eng, runner: runner, approver: approver}
 }
 
 // ExecutePlaybook exécute le plan de pb contre l'hôte h et ingère les résultats
@@ -42,17 +47,41 @@ func (e *Executor) ExecutePlaybook(ctx context.Context, store *graph.Store, h gr
 			if !ok {
 				continue // pas d'adapter pour cette action : on saute
 			}
-			if st.RequiresApproval {
-				continue // l'intrusif attend les tiers d'approbation
-			}
 
 			params := contextParams(st, h)
 			inv, err := tool.Prepare(params)
 			if err != nil {
 				return steps, fmt.Errorf("agent : paramètres invalides pour %q : %w", st.Action, err)
 			}
+			// Contrôle de périmètre AVANT toute approbation : on ne propose jamais
+			// d'approuver une action hors scope.
 			if err := tools.EnforceScope(e.eng, inv); err != nil {
 				return steps, err
+			}
+
+			// Tiers d'approbation : une action intrusive (marquée requires_approval,
+			// ou de catégorie exploitation/post_exploit) exige une validation humaine
+			// avec dry-run. Le reste (recon/énumération/vuln_scan) est automatique.
+			if besoinApprobation(st, tool) {
+				ok, err := e.approver.Approve(DryRun{
+					Action:    st.Action,
+					Category:  string(tool.Category()),
+					Targets:   inv.Targets,
+					Command:   inv.Spec.Argv,
+					Rationale: st.Rationale,
+				})
+				if err != nil {
+					return steps, fmt.Errorf("agent : approbation de %q : %w", st.Action, err)
+				}
+				if !ok {
+					steps = append(steps, Step{
+						Action:    st.Action,
+						Targets:   inv.Targets,
+						Rationale: st.Rationale,
+						Status:    "refusé",
+					})
+					continue // non approuvé : on n'exécute pas
+				}
 			}
 
 			res, err := e.runner.Run(ctx, inv.Spec)
@@ -63,6 +92,18 @@ func (e *Executor) ExecutePlaybook(ctx context.Context, store *graph.Store, h gr
 			if err != nil {
 				return steps, fmt.Errorf("agent : lecture de la sortie de %q : %w", st.Action, err)
 			}
+			// Rattache les findings sans hôte/port à l'hôte courant (certains outils,
+			// comme sqlmap, ne connaissent pas l'adresse dans leur sortie).
+			for i := range out.Findings {
+				if out.Findings[i].Host == "" {
+					out.Findings[i].Host = h.Address
+				}
+				if out.Findings[i].Port == 0 {
+					if p, _ := webEndpoint(h); p != 0 {
+						out.Findings[i].Port = p
+					}
+				}
+			}
 			store.Merge(out.Hosts)
 			store.MergeFindings(out.Findings)
 
@@ -72,10 +113,25 @@ func (e *Executor) ExecutePlaybook(ctx context.Context, store *graph.Store, h gr
 				Rationale:  st.Rationale,
 				ExitCode:   res.ExitCode,
 				HostsFound: len(out.Hosts),
+				Status:     "exécuté",
 			})
 		}
 	}
 	return steps, nil
+}
+
+// besoinApprobation indique si une action exige une validation humaine : marquée
+// requires_approval (playbook ou adapter), ou de catégorie intrusive
+// (exploitation / post_exploit).
+func besoinApprobation(st playbook.Step, tool tools.Tool) bool {
+	if st.RequiresApproval || tool.RequiresApproval() {
+		return true
+	}
+	switch tool.Category() {
+	case engagement.CatExploitation, engagement.CatPostExploit:
+		return true
+	}
+	return false
 }
 
 // contextParams part des paramètres du step et y injecte le contexte de l'hôte
