@@ -43,7 +43,7 @@ Le LLM est **local** (Ollama) : aucune donnée de mission ne quitte la machine.
 | 1 | Le LLM choisit une action typée, jamais du shell | `internal/llm` (sortie JSON contrainte) + `internal/tools` (catalogue) |
 | 2 | **Scope** : toute cible vérifiée contre le périmètre | `engagement.InScope` + `tools.EnforceScope` |
 | 3 | **RoE** : catégories activables ; interdits durs impossibles | `engagement.RoE` + `hardProhibited` |
-| 4 | **Tiers d'approbation** : recon auto, intrusif validé par l'humain | `Tool.RequiresApproval` + playbook `requires_approval` (câblage à venir) |
+| 4 | **Tiers d'approbation** : recon auto, intrusif validé par l'humain (dry-run) | `agent.Approver` + `Executor` (gating) + `Tool.RequiresApproval` / playbook `requires_approval` |
 | 5 | **Sandbox** : conteneur jetable, réseau limité | `internal/sandbox` (DockerRunner durci) |
 | 6 | **Audit** : journal horodaté rejouable | `internal/audit` (à implémenter avec la boucle) |
 | 7 | **Anti-injection** : sorties cibles = données, pas instructions | parsing dans les adapters + prompts de rôle |
@@ -86,6 +86,7 @@ aria/
 │   │   ├── portscan.go         #   adapter port_scan (nmap) : Prepare / Parse / schémas
 │   │   ├── nuclei.go           #   adapter nuclei_scan (vuln web) : Parse JSONL
 │   │   ├── smbenum.go          #   adapter smb_enum (nmap NSE)
+│   │   ├── sqli.go             #   adapter sqli_probe (sqlmap, exploitation GATED)
 │   │   ├── tools_test.go
 │   │   ├── portscan_test.go
 │   │   ├── nuclei_test.go
@@ -108,6 +109,7 @@ aria/
 │   │   ├── recon.go            #   RunRecon : la boucle de reconnaissance
 │   │   ├── analyst.go          #   Analyst : services -> findings candidats
 │   │   ├── executor.go         #   Executor : exécution autonome du plan par phases
+│   │   ├── approval.go         #   Approver + DryRun : tiers d'approbation (n°4)
 │   │   ├── planner_test.go
 │   │   ├── analyst_test.go
 │   │   └── executor_test.go
@@ -129,7 +131,8 @@ aria/
 │
 ├── examples/
 │   ├── engagement.example.yaml # exemple générique
-│   └── engagement.lab.yaml     # engagement prêt à l'emploi pour le lab local
+│   ├── engagement.lab.yaml     # engagement prêt à l'emploi pour le lab local
+│   └── engagement.lab-exploit.yaml # idem, avec exploitation activée (démo approbation)
 │
 ├── labs/
 │   ├── docker-compose.yml      # Juice Shop sur réseau isolé aria-lab (IP fixe)
@@ -137,7 +140,8 @@ aria/
 │
 ├── docker/
 │   ├── nmap.Dockerfile         # image aria/nmap (Alpine + nmap, non-root)
-│   └── nuclei.Dockerfile       # image aria/nuclei (nuclei + templates embarqués)
+│   ├── nuclei.Dockerfile       # image aria/nuclei (nuclei + templates embarqués)
+│   └── sqlmap.Dockerfile       # image aria/sqlmap (sqlmap, détection seule)
 │
 └── docs/
     ├── architecture.md         # note de conception initiale (EN)
@@ -269,6 +273,9 @@ une action — qui échouera ensuite aux étapes 3-4.
   `HOME=/tmp`). `Parse` lit le JSONL et produit des `graph.Finding`.
 - **`smb_enum`** (adapter nmap NSE, `enumeration`) : énumère SMB (partages, OS,
   mode de sécurité) ; convertit la sortie des scripts en findings informationnels.
+- **`sqli_probe`** (adapter sqlmap, `exploitation`, `RequiresApproval=true`) :
+  confirme une injection SQL en **détection seule** (`--batch`, pas de `--dump`).
+  Ne s'exécute jamais sans validation humaine (voir §6.6, tiers d'approbation).
 
 ### 6.4 `graph` — knowledge graph
 
@@ -306,11 +313,15 @@ une action — qui échouera ensuite aux étapes 3-4.
   traite comme des **données, pas des instructions**. `AnalyzeStore` parcourt tous
   les hôtes et réinjecte les findings.
 - **`Executor`** (exécution autonome) : `ExecutePlaybook` enchaîne, contre un hôte,
-  les steps du plan (`Engine.PlanForHost`) dont l'outil est disponible et qui
-  n'exigent pas d'approbation, puis ingère hôtes/findings dans le graph. Les steps
-  intrusifs (`requires_approval`) sont laissés aux tiers d'approbation ; la cible
-  est toujours l'hôte courant (jamais choisie par le LLM) ; `EnforceScope` est
-  appliqué avant chaque exécution.
+  les steps du plan (`Engine.PlanForHost`) dont l'outil est disponible, puis ingère
+  hôtes/findings dans le graph. La cible est toujours l'hôte courant (jamais choisie
+  par le LLM) ; `EnforceScope` est appliqué avant chaque exécution.
+- **`Approver` + `DryRun`** (tiers d'approbation, garde-fou n°4) : une action
+  intrusive (`requires_approval`, ou catégorie exploitation/post_exploit) est
+  présentée à l'opérateur sous forme de **dry-run** (action, cible, commande exacte,
+  justification) — après le contrôle de scope — et n'est exécutée qu'après
+  validation. Refus ⇒ step « refusé », rien ne s'exécute. Sans approbateur
+  (`AutoDeny`), tout l'intrusif est refusé (fail-closed).
 
 ### 6.7 `profiler` — classification de cible
 
@@ -379,12 +390,17 @@ images nmap et nuclei construites.
 # 1. Construire les images (une fois)
 docker build -t aria/nmap -f docker/nmap.Dockerfile docker
 docker build -t aria/nuclei -f docker/nuclei.Dockerfile docker
+docker build -t aria/sqlmap -f docker/sqlmap.Dockerfile docker
 
 # 2. Démarrer le lab (OWASP Juice Shop sur le réseau isolé aria-lab)
 docker compose -f labs/docker-compose.yml up -d
 
 # 3. Lancer recon + profilage + exécution autonome du plan contre la cible
 go run ./cmd/aria -engagement examples/engagement.lab.yaml -recon -network aria-lab
+
+# 3bis. Avec exploitation activée : chaque action intrusive demande une validation
+#       (dry-run affiché ; répondre y pour l'exécuter, N/entrée non interactive = refus)
+go run ./cmd/aria -engagement examples/engagement.lab-exploit.yaml -recon -network aria-lab
 
 # 4. Vérifier un contrôle de scope (sans rien exécuter)
 go run ./cmd/aria -engagement examples/engagement.lab.yaml -check 8.8.8.8   # HORS SCOPE
@@ -418,14 +434,16 @@ go test -race ./internal/graph/   # vérifie l'absence de course de données
 
 ## 10. État d'avancement & suite
 
-**Fait** : engagement · sandbox · tools (port_scan, nuclei_scan, smb_enum) · graph ·
-Planner (recon) · Analyst · profiler · playbooks (chargeur + moteur `when`/plan) ·
-**exécution autonome du plan par phases (Executor)** · CLI recon · lab. Démo
-bout-en-bout fonctionnelle (recon → profil → exécution du plan → nuclei → findings).
+**Fait** : engagement · sandbox · tools (port_scan, nuclei_scan, smb_enum,
+sqli_probe) · graph · Planner (recon) · Analyst · profiler · playbooks (moteur
+`when`/plan) · exécution autonome par phases (Executor) · **tiers d'approbation
+(Approver + dry-run) et 1re exploitation gated (sqli_probe)** · CLI recon · lab.
+Démo bout-en-bout fonctionnelle (recon → profil → plan → nuclei → exploitation
+sous validation humaine).
 
-**Suite prévue** : tiers d'approbation + exploitation en lab → Reporter (rapport
-Markdown/PDF) → banc d'évaluation multi-modèles → polish/TUI. Le **journal d'audit**
-(`internal/audit`) sera branché sur la boucle de l'agent.
+**Suite prévue** : Reporter (rapport Markdown/PDF) → banc d'évaluation
+multi-modèles → polish/TUI. Le **journal d'audit** (`internal/audit`) sera branché
+sur la boucle de l'agent (traçabilité des approbations notamment).
 
 **Raffinements connus** : filtrage egress par IP exacte côté hôte (chaîne
 `DOCKER-USER`) ; balayage de sous-réseau vérifié bloc par bloc ; dédoublonnage des
