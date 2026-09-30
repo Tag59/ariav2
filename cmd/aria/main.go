@@ -34,7 +34,8 @@ func main() {
 	recon := flag.Bool("recon", false, "lance la boucle de reconnaissance assistée par le LLM")
 	model := flag.String("model", "qwen3:8b", "modèle Ollama à utiliser pour le LLM")
 	network := flag.String("network", "", "réseau Docker isolé pour le scan (ex. aria-lab) ; vide = aucun réseau")
-	image := flag.String("image", "aria/nmap:latest", "image conteneur pour port_scan")
+	image := flag.String("image", "aria/nmap:latest", "image conteneur pour port_scan / smb_enum")
+	nucleiImage := flag.String("nuclei-image", "aria/nuclei:latest", "image conteneur pour nuclei_scan")
 	maxSteps := flag.Int("max-steps", 8, "nombre maximum d'actions de reconnaissance")
 	playbooksDir := flag.String("playbooks", "playbooks", "dossier des playbooks")
 	flag.Parse()
@@ -65,7 +66,7 @@ func main() {
 
 	// Mode 2 : boucle de reconnaissance.
 	if *recon {
-		if err := lancerRecon(eng, *model, *network, *image, *maxSteps, *playbooksDir); err != nil {
+		if err := lancerRecon(eng, *model, *network, *image, *nucleiImage, *maxSteps, *playbooksDir); err != nil {
 			fmt.Fprintf(os.Stderr, "aria : %v\n", err)
 			os.Exit(1)
 		}
@@ -100,7 +101,7 @@ func verifierCible(eng *engagement.Engagement, cible string) {
 }
 
 // lancerRecon assemble tous les composants et exécute la boucle recon + analyse.
-func lancerRecon(eng *engagement.Engagement, model, network, image string, maxSteps int, playbooksDir string) error {
+func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage string, maxSteps int, playbooksDir string) error {
 	ctx := context.Background()
 
 	// Politique réseau du bac à sable : aucun réseau par défaut (sûr), ou un
@@ -120,10 +121,16 @@ func lancerRecon(eng *engagement.Engagement, model, network, image string, maxSt
 		return fmt.Errorf("Docker requis pour la reconnaissance : %w", err)
 	}
 
-	// Registre d'outils : pour l'instant, port_scan.
+	// Registre d'outils.
 	reg := tools.NewRegistry()
-	if err := reg.Register(tools.NewPortScan(image, netPol)); err != nil {
-		return err
+	for _, t := range []tools.Tool{
+		tools.NewPortScan(image, netPol),
+		tools.NewNucleiScan(nucleiImage, netPol),
+		tools.NewSMBEnum(image, netPol),
+	} {
+		if err := reg.Register(t); err != nil {
+			return err
+		}
 	}
 
 	store := graph.NewStore()
@@ -139,8 +146,9 @@ func lancerRecon(eng *engagement.Engagement, model, network, image string, maxSt
 		fmt.Printf("  • %s %v (exit %d, %d hôte(s)) — %s\n", s.Action, s.Targets, s.ExitCode, s.HostsFound, s.Rationale)
 	}
 
-	fmt.Println("\n→ Profilage et plan méthodologique...")
-	afficherProfilsEtPlan(store, eng, playbooksDir)
+	fmt.Println("\n→ Profilage, plan et exécution autonome...")
+	executor := agent.NewExecutor(reg, eng, runner)
+	profilerPlanifierExecuter(ctx, store, eng, executor, playbooksDir)
 
 	fmt.Println("\n→ Analyse des services découverts...")
 	analyst := agent.NewAnalyst(client)
@@ -152,10 +160,10 @@ func lancerRecon(eng *engagement.Engagement, model, network, image string, maxSt
 	return nil
 }
 
-// afficherProfilsEtPlan classe chaque hôte et affiche, via le playbook recommandé,
-// le plan méthodologique applicable (steps dont la condition when tient et dont la
-// catégorie est autorisée par les RoE).
-func afficherProfilsEtPlan(store *graph.Store, eng *engagement.Engagement, playbooksDir string) {
+// profilerPlanifierExecuter classe chaque hôte, affiche le plan méthodologique
+// applicable (via le playbook recommandé), puis EXÉCUTE automatiquement les steps
+// applicables et outillés (sauf ceux exigeant une approbation).
+func profilerPlanifierExecuter(ctx context.Context, store *graph.Store, eng *engagement.Engagement, executor *agent.Executor, playbooksDir string) {
 	cache := map[string]*playbook.Playbook{}
 	for _, prof := range profiler.ClassifyStore(store) {
 		fmt.Printf("  • %s\n", prof)
@@ -179,16 +187,33 @@ func afficherProfilsEtPlan(store *graph.Store, eng *engagement.Engagement, playb
 		if !ok {
 			continue
 		}
+
+		// Plan (ce que le playbook suggère, adapté aux découvertes et aux RoE).
 		plan := playbook.NewEngine(pb, eng.RoE).PlanForHost(host)
 		for _, ph := range plan {
 			fmt.Printf("      Phase « %s » :\n", ph.Name)
 			for _, st := range ph.Steps {
 				marque := ""
 				if st.RequiresApproval {
-					marque = " [approbation requise]"
+					marque = " [approbation requise — ignoré en auto]"
 				}
 				fmt.Printf("        - %s%s\n", st.Action, marque)
 			}
+		}
+
+		// Exécution autonome des steps applicables et outillés.
+		steps, err := executor.ExecutePlaybook(ctx, store, host, pb)
+		if err != nil {
+			fmt.Printf("      exécution interrompue : %v\n", err)
+			continue
+		}
+		if len(steps) == 0 {
+			fmt.Println("      (aucun step exécutable automatiquement pour l'instant)")
+			continue
+		}
+		fmt.Println("      Exécuté :")
+		for _, s := range steps {
+			fmt.Printf("        ✓ %s %v (exit %d)\n", s.Action, s.Targets, s.ExitCode)
 		}
 	}
 }
