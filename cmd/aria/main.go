@@ -11,11 +11,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Tag59/aria/internal/agent"
@@ -36,6 +38,7 @@ func main() {
 	network := flag.String("network", "", "réseau Docker isolé pour le scan (ex. aria-lab) ; vide = aucun réseau")
 	image := flag.String("image", "aria/nmap:latest", "image conteneur pour port_scan / smb_enum")
 	nucleiImage := flag.String("nuclei-image", "aria/nuclei:latest", "image conteneur pour nuclei_scan")
+	sqlmapImage := flag.String("sqlmap-image", "aria/sqlmap:latest", "image conteneur pour sqli_probe")
 	maxSteps := flag.Int("max-steps", 8, "nombre maximum d'actions de reconnaissance")
 	playbooksDir := flag.String("playbooks", "playbooks", "dossier des playbooks")
 	flag.Parse()
@@ -66,7 +69,7 @@ func main() {
 
 	// Mode 2 : boucle de reconnaissance.
 	if *recon {
-		if err := lancerRecon(eng, *model, *network, *image, *nucleiImage, *maxSteps, *playbooksDir); err != nil {
+		if err := lancerRecon(eng, *model, *network, *image, *nucleiImage, *sqlmapImage, *maxSteps, *playbooksDir); err != nil {
 			fmt.Fprintf(os.Stderr, "aria : %v\n", err)
 			os.Exit(1)
 		}
@@ -101,7 +104,7 @@ func verifierCible(eng *engagement.Engagement, cible string) {
 }
 
 // lancerRecon assemble tous les composants et exécute la boucle recon + analyse.
-func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage string, maxSteps int, playbooksDir string) error {
+func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir string) error {
 	ctx := context.Background()
 
 	// Politique réseau du bac à sable : aucun réseau par défaut (sûr), ou un
@@ -127,6 +130,7 @@ func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage 
 		tools.NewPortScan(image, netPol),
 		tools.NewNucleiScan(nucleiImage, netPol),
 		tools.NewSMBEnum(image, netPol),
+		tools.NewSQLiProbe(sqlmapImage, netPol),
 	} {
 		if err := reg.Register(t); err != nil {
 			return err
@@ -147,7 +151,7 @@ func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage 
 	}
 
 	fmt.Println("\n→ Profilage, plan et exécution autonome...")
-	executor := agent.NewExecutor(reg, eng, runner)
+	executor := agent.NewExecutor(reg, eng, runner, &approbateurCLI{in: bufio.NewReader(os.Stdin)})
 	profilerPlanifierExecuter(ctx, store, eng, executor, playbooksDir)
 
 	fmt.Println("\n→ Analyse des services découverts...")
@@ -211,11 +215,39 @@ func profilerPlanifierExecuter(ctx context.Context, store *graph.Store, eng *eng
 			fmt.Println("      (aucun step exécutable automatiquement pour l'instant)")
 			continue
 		}
-		fmt.Println("      Exécuté :")
+		fmt.Println("      Résultat :")
 		for _, s := range steps {
-			fmt.Printf("        ✓ %s %v (exit %d)\n", s.Action, s.Targets, s.ExitCode)
+			if s.Status == "refusé" {
+				fmt.Printf("        ✗ %s %v — refusé (non approuvé)\n", s.Action, s.Targets)
+			} else {
+				fmt.Printf("        ✓ %s %v (exit %d)\n", s.Action, s.Targets, s.ExitCode)
+			}
 		}
 	}
+}
+
+// approbateurCLI demande à l'opérateur de valider une action intrusive, en
+// affichant un dry-run complet (garde-fou n°4). En entrée non interactive (pas de
+// terminal), la lecture échoue et l'action est REFUSÉE (fail-closed).
+type approbateurCLI struct {
+	in *bufio.Reader
+}
+
+func (a *approbateurCLI) Approve(dr agent.DryRun) (bool, error) {
+	fmt.Println("\n  ┌─ VALIDATION REQUISE — action intrusive ─────────────────────")
+	fmt.Printf("  │ action   : %s (%s)\n", dr.Action, dr.Category)
+	fmt.Printf("  │ cible(s) : %v\n", dr.Targets)
+	fmt.Printf("  │ pourquoi : %s\n", dr.Rationale)
+	fmt.Printf("  │ commande : %s\n", strings.Join(dr.Command, " "))
+	fmt.Print("  └ Exécuter cette action ? [y/N] ")
+
+	line, err := a.in.ReadString('\n')
+	if err != nil {
+		fmt.Println("(pas d'entrée interactive → refus par défaut)")
+		return false, nil
+	}
+	rep := strings.TrimSpace(strings.ToLower(line))
+	return rep == "y" || rep == "yes" || rep == "o" || rep == "oui", nil
 }
 
 // afficherGraph imprime les hôtes/services et les findings accumulés.

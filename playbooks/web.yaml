@@ -145,13 +145,14 @@ phases:
         action: sqli_probe
         category: exploitation
         gated_by_roe: exploitation
-        requires_approval: true      # dry-run shown, human must approve
-        when: "finding.candidate == 'sql_injection'"
+        requires_approval: true      # dry-run affiché, validation humaine obligatoire
+        when: "service.http == true"
         params:
-          technique: "boolean-blind"
-          confirm_only: true         # confirm existence, no data exfiltration
-          max_requests: 200
-        rationale: "Confirm a candidate SQL injection non-destructively; never dump or alter data."
+          # Point d'injection connu d'OWASP Juice Shop : le champ email du login.
+          # sqlmap teste ce paramètre en détection seule (pas d'exfiltration).
+          path: "/rest/user/login"
+          data: '{"email":"test@test.com","password":"test"}'
+        rationale: "Confirmer de façon NON destructive une injection SQL (login) ; ne jamais dumper ni altérer de données."
         refs: ["WSTG-INPV-05", "CWE-89"]
 
       - id: xss_probe
