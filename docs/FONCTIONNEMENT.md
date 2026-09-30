@@ -300,14 +300,22 @@ une action — qui échouera ensuite aux étapes 3-4.
   AD > web-app > windows > linux > network-host. Chaque `Profile` porte ses raisons.
 - **`ClassifyStore(store)`** : classe tous les hôtes du graph.
 
-### 6.8 `playbook` — chargement des playbooks
+### 6.8 `playbook` — chargement + moteur
 
 - **`Load` / `ParseAndValidate`** : transforment un playbook YAML en structures
   (`Playbook` / `Phase` / `Step`) **validées** : nom et `target_type` obligatoires,
   au moins une phase, chaque step a une `action`, et les catégories (`category`,
   `gated_by_roe`) sont des catégories connues, **jamais un interdit dur**. YAML lu
-  en mode strict. Le moteur d'exécution (évaluation des conditions `when`,
-  progression entre phases) reste à implémenter.
+  en mode strict.
+- **`EvalWhen`** : évalue les conditions `when` des steps contre des faits
+  (langage minuscule évalué par le moteur, jamais le LLM ; condition inconnue =
+  false, fail-closed).
+- **`Engine.PlanForHost`** : calcule, phase par phase, les steps **applicables** à
+  un hôte — condition `when` satisfaite **et** catégorie autorisée par les RoE.
+  `FactsForHost` dérive les faits (`service.http/https/smb/ssh/snmp`,
+  `target.is_hostname`) des services découverts. C'est le « cadre » dans lequel le
+  Planner raisonnera. L'exécution autonome pilotée par les phases (faire enchaîner
+  au Planner les steps applicables) viendra avec les adapters d'énumération/vuln.
 
 ### 6.9 `cmd/aria` — la CLI
 
@@ -389,13 +397,13 @@ go test -race ./internal/graph/   # vérifie l'absence de course de données
 ## 10. État d'avancement & suite
 
 **Fait** : engagement · sandbox · tools/port_scan · graph · Planner (recon) ·
-Analyst · profiler · chargeur de playbooks (+ web.yaml, network-host.yaml) ·
-CLI recon · lab. Démo bout-en-bout fonctionnelle.
+Analyst · profiler · playbooks (chargeur + moteur `when`/plan applicable ;
+web.yaml, network-host.yaml) · CLI recon · lab. Démo bout-en-bout fonctionnelle.
 
-**Suite prévue** : moteur d'exécution des playbooks (conditions `when`, progression
-entre phases) → tiers d'approbation + exploitation en lab → Reporter (rapport
-Markdown/PDF) → banc d'évaluation multi-modèles → polish/TUI. Le **journal d'audit**
-(`internal/audit`) sera branché sur la boucle de l'agent.
+**Suite prévue** : adapters d'énumération/vuln (smb_enum, nuclei…) puis exécution
+autonome pilotée par les phases → tiers d'approbation + exploitation en lab →
+Reporter (rapport Markdown/PDF) → banc d'évaluation multi-modèles → polish/TUI. Le
+**journal d'audit** (`internal/audit`) sera branché sur la boucle de l'agent.
 
 **Raffinements connus** : filtrage egress par IP exacte côté hôte (chaîne
 `DOCKER-USER`) ; balayage de sous-réseau vérifié bloc par bloc ; port des findings
