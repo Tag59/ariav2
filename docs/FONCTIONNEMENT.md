@@ -84,8 +84,12 @@ aria/
 │   ├── tools/                  # ✅ catalogue d'actions typées
 │   │   ├── tools.go            #   interface Tool + Registry + Invocation + EnforceScope
 │   │   ├── portscan.go         #   adapter port_scan (nmap) : Prepare / Parse / schémas
+│   │   ├── nuclei.go           #   adapter nuclei_scan (vuln web) : Parse JSONL
+│   │   ├── smbenum.go          #   adapter smb_enum (nmap NSE)
 │   │   ├── tools_test.go
-│   │   └── portscan_test.go
+│   │   ├── portscan_test.go
+│   │   ├── nuclei_test.go
+│   │   └── smbenum_test.go
 │   │
 │   ├── graph/                  # ✅ knowledge graph
 │   │   ├── graph.go            #   doc de paquet
@@ -103,15 +107,19 @@ aria/
 │   │   ├── planner.go          #   Planner : Next (action) + Params (paramètres)
 │   │   ├── recon.go            #   RunRecon : la boucle de reconnaissance
 │   │   ├── analyst.go          #   Analyst : services -> findings candidats
+│   │   ├── executor.go         #   Executor : exécution autonome du plan par phases
 │   │   ├── planner_test.go
-│   │   └── analyst_test.go
+│   │   ├── analyst_test.go
+│   │   └── executor_test.go
 │   │
 │   ├── profiler/               # ✅ classification de cible + choix de playbook
 │   │   ├── profiler.go
 │   │   └── profiler_test.go
-│   ├── playbook/               # ✅ chargement + validation des playbooks YAML
+│   ├── playbook/               # ✅ chargement + validation + moteur (when/plan)
 │   │   ├── playbook.go
-│   │   └── playbook_test.go
+│   │   ├── condition.go        #   EvalWhen : évaluation des conditions `when`
+│   │   ├── engine.go           #   Engine.PlanForHost : plan applicable (when+RoE)
+│   │   └── *_test.go
 │   ├── report/                 # ⏳ génération de rapport (placeholder)
 │   └── audit/                  # ⏳ journal d'audit (placeholder)
 │
@@ -128,7 +136,8 @@ aria/
 │   └── README.md
 │
 ├── docker/
-│   └── nmap.Dockerfile         # image aria/nmap (Alpine + nmap, non-root)
+│   ├── nmap.Dockerfile         # image aria/nmap (Alpine + nmap, non-root)
+│   └── nuclei.Dockerfile       # image aria/nuclei (nuclei + templates embarqués)
 │
 └── docs/
     ├── architecture.md         # note de conception initiale (EN)
@@ -254,6 +263,12 @@ une action — qui échouera ensuite aux étapes 3-4.
     - `-oX -` : sortie XML sur stdout, pour un parsing fiable.
   - `Parse` : lit le XML nmap, ne garde que les hôtes *up* et les ports *open*,
     et renvoie des `graph.Host`/`graph.Service`.
+- **`nuclei_scan`** (adapter nuclei, `vuln_scan`) : scanne un service HTTP avec des
+  templates non destructifs. Image `aria/nuclei` (templates embarqués au build) ;
+  au runtime, aucun accès Internet (`-t /nuclei-templates`, `-duc`, `-ni`,
+  `HOME=/tmp`). `Parse` lit le JSONL et produit des `graph.Finding`.
+- **`smb_enum`** (adapter nmap NSE, `enumeration`) : énumère SMB (partages, OS,
+  mode de sécurité) ; convertit la sortie des scripts en findings informationnels.
 
 ### 6.4 `graph` — knowledge graph
 
@@ -290,6 +305,12 @@ une action — qui échouera ensuite aux étapes 3-4.
   échelle qualitative). Les données analysées viennent de la cible : le prompt les
   traite comme des **données, pas des instructions**. `AnalyzeStore` parcourt tous
   les hôtes et réinjecte les findings.
+- **`Executor`** (exécution autonome) : `ExecutePlaybook` enchaîne, contre un hôte,
+  les steps du plan (`Engine.PlanForHost`) dont l'outil est disponible et qui
+  n'exigent pas d'approbation, puis ingère hôtes/findings dans le graph. Les steps
+  intrusifs (`requires_approval`) sont laissés aux tiers d'approbation ; la cible
+  est toujours l'hôte courant (jamais choisie par le LLM) ; `EnforceScope` est
+  appliqué avant chaque exécution.
 
 ### 6.7 `profiler` — classification de cible
 
@@ -352,16 +373,17 @@ Détails complets : voir `architecture.md` (§ threat model).
 ## 8. Démo pas à pas
 
 Prérequis : Docker lancé, Ollama lancé, modèle récupéré (`ollama pull qwen3:8b`),
-image nmap construite.
+images nmap et nuclei construites.
 
 ```bash
-# 1. Construire l'image nmap (une fois)
-docker build -t aria/nmap docker
+# 1. Construire les images (une fois)
+docker build -t aria/nmap -f docker/nmap.Dockerfile docker
+docker build -t aria/nuclei -f docker/nuclei.Dockerfile docker
 
 # 2. Démarrer le lab (OWASP Juice Shop sur le réseau isolé aria-lab)
 docker compose -f labs/docker-compose.yml up -d
 
-# 3. Lancer une reconnaissance assistée par le LLM contre la cible
+# 3. Lancer recon + profilage + exécution autonome du plan contre la cible
 go run ./cmd/aria -engagement examples/engagement.lab.yaml -recon -network aria-lab
 
 # 4. Vérifier un contrôle de scope (sans rien exécuter)
@@ -396,15 +418,15 @@ go test -race ./internal/graph/   # vérifie l'absence de course de données
 
 ## 10. État d'avancement & suite
 
-**Fait** : engagement · sandbox · tools/port_scan · graph · Planner (recon) ·
-Analyst · profiler · playbooks (chargeur + moteur `when`/plan applicable ;
-web.yaml, network-host.yaml) · CLI recon · lab. Démo bout-en-bout fonctionnelle.
+**Fait** : engagement · sandbox · tools (port_scan, nuclei_scan, smb_enum) · graph ·
+Planner (recon) · Analyst · profiler · playbooks (chargeur + moteur `when`/plan) ·
+**exécution autonome du plan par phases (Executor)** · CLI recon · lab. Démo
+bout-en-bout fonctionnelle (recon → profil → exécution du plan → nuclei → findings).
 
-**Suite prévue** : adapters d'énumération/vuln (smb_enum, nuclei…) puis exécution
-autonome pilotée par les phases → tiers d'approbation + exploitation en lab →
-Reporter (rapport Markdown/PDF) → banc d'évaluation multi-modèles → polish/TUI. Le
-**journal d'audit** (`internal/audit`) sera branché sur la boucle de l'agent.
+**Suite prévue** : tiers d'approbation + exploitation en lab → Reporter (rapport
+Markdown/PDF) → banc d'évaluation multi-modèles → polish/TUI. Le **journal d'audit**
+(`internal/audit`) sera branché sur la boucle de l'agent.
 
 **Raffinements connus** : filtrage egress par IP exacte côté hôte (chaîne
-`DOCKER-USER`) ; balayage de sous-réseau vérifié bloc par bloc ; port des findings
-parfois non renseigné par le LLM (à fiabiliser via le schéma).
+`DOCKER-USER`) ; balayage de sous-réseau vérifié bloc par bloc ; dédoublonnage des
+findings entre sources (nuclei vs Analyst peuvent produire des intitulés proches).
