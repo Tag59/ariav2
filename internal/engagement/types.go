@@ -54,6 +54,10 @@ var hardProhibited = map[Category]bool{
 // IsHardProhibited indique si une catégorie est un interdit dur, non négociable.
 func IsHardProhibited(c Category) bool { return hardProhibited[c] }
 
+// IsSelectableCategory indique si une catégorie peut être activée/utilisée
+// (recon, enumeration, vuln_scan, exploitation, post_exploit).
+func IsSelectableCategory(c Category) bool { return selectableCategories[c] }
+
 // Engagement est l'engagement.yaml parsé et validé. Il n'est utilisable en toute
 // sécurité qu'une fois produit par ParseAndValidate ou Load ; une valeur zéro n'a
 // pas de scope compilé et tout appel à InScope échoue en mode fermé (fail-closed).

@@ -1,0 +1,98 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Playbook ARIA — Hôte réseau (Linux/Windows/générique, aligné PTES)
+#
+# Utilisé par le profiler pour les cibles qui ne sont pas des applications web :
+# hôtes Linux/Windows et, provisoirement, contrôleurs de domaine. Même cadre que
+# web.yaml : le Planner raisonne à l'intérieur, chaque action reste soumise au
+# scope, aux RoE et (pour l'intrusif) à l'approbation humaine.
+#
+# Champs : voir docs/architecture.md et playbooks/web.yaml.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: network-host
+target_type: network-host
+description: >-
+  Reconnaissance et énumération d'un hôte réseau : découverte des ports/services,
+  énumération des services courants (SMB, SSH, SNMP), puis identification de
+  vulnérabilités. Tout est automatique jusqu'à l'identification ; l'exploitation
+  reste gérée à part, sous approbation.
+
+phases:
+  # ── Phase 1 — Recon / découverte des services ──────────────────────────────
+  - id: recon
+    name: "Découverte des services"
+    steps:
+      - id: port_scan
+        action: port_scan
+        category: recon
+        gated_by_roe: recon
+        requires_approval: false
+        params:
+          ports: top1000
+          service_detection: true
+        rationale: "Découvrir les ports ouverts et identifier les services/versions de l'hôte."
+        refs: ["PTES-Intelligence-Gathering"]
+
+  # ── Phase 2 — Énumération des services ─────────────────────────────────────
+  - id: enumeration
+    name: "Énumération des services"
+    steps:
+      - id: smb_enum
+        action: smb_enum
+        category: enumeration
+        gated_by_roe: enumeration
+        requires_approval: false
+        when: "service.smb == true"
+        params: {}
+        rationale: "Énumérer partages, sessions et utilisateurs SMB (souvent riche en informations)."
+        refs: ["MITRE-T1135"]
+
+      - id: ssh_audit
+        action: ssh_audit
+        category: enumeration
+        gated_by_roe: enumeration
+        requires_approval: false
+        when: "service.ssh == true"
+        params: {}
+        rationale: "Auditer la configuration SSH (algorithmes, méthodes d'authentification)."
+        refs: []
+
+      - id: snmp_enum
+        action: snmp_enum
+        category: enumeration
+        gated_by_roe: enumeration
+        requires_approval: false
+        when: "service.snmp == true"
+        params:
+          community: "public"
+        rationale: "Interroger SNMP en lecture (community par défaut) pour cartographier l'hôte."
+        refs: ["MITRE-T1046"]
+
+  # ── Phase 3 — Identification de vulnérabilités ─────────────────────────────
+  - id: vuln_id
+    name: "Identification de vulnérabilités"
+    steps:
+      - id: nuclei_scan
+        action: nuclei_scan
+        category: vuln_scan
+        gated_by_roe: vuln_scan
+        requires_approval: false
+        params:
+          severity: ["low", "medium", "high", "critical"]
+          templates: "safe"
+        rationale: "Confronter les services détectés à des templates de détection non intrusifs."
+        refs: []
+
+  # ── Phase 4 — Reporting ────────────────────────────────────────────────────
+  - id: reporting
+    name: "Reporting"
+    steps:
+      - id: compile_report
+        action: compile_report
+        category: recon
+        gated_by_roe: recon
+        requires_approval: false
+        params:
+          formats: ["markdown", "pdf", "json"]
+        rationale: "Rendre les findings du knowledge graph dans un rapport."
+        refs: []
