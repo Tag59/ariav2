@@ -106,13 +106,18 @@ aria/
 │   │   ├── planner_test.go
 │   │   └── analyst_test.go
 │   │
-│   ├── profiler/               # ⏳ classification de cible (placeholder)
-│   ├── playbook/               # ⏳ moteur de playbooks (placeholder)
+│   ├── profiler/               # ✅ classification de cible + choix de playbook
+│   │   ├── profiler.go
+│   │   └── profiler_test.go
+│   ├── playbook/               # ✅ chargement + validation des playbooks YAML
+│   │   ├── playbook.go
+│   │   └── playbook_test.go
 │   ├── report/                 # ⏳ génération de rapport (placeholder)
 │   └── audit/                  # ⏳ journal d'audit (placeholder)
 │
 ├── playbooks/
-│   └── web.yaml                # playbook web déclaratif (WSTG/PTES)
+│   ├── web.yaml                # playbook web déclaratif (WSTG/PTES)
+│   └── network-host.yaml       # playbook hôte réseau (Linux/Windows/générique)
 │
 ├── examples/
 │   ├── engagement.example.yaml # exemple générique
@@ -286,12 +291,31 @@ une action — qui échouera ensuite aux étapes 3-4.
   traite comme des **données, pas des instructions**. `AnalyzeStore` parcourt tous
   les hôtes et réinjecte les findings.
 
-### 6.7 `cmd/aria` — la CLI
+### 6.7 `profiler` — classification de cible
+
+- **`Classify(host)`** : déduit le **type** de la cible (web-app, ad, windows-host,
+  linux-host, network-host, unknown) à partir de ses services, de façon
+  **déterministe** (règles sur ports/services — pas de LLM, donc fiable, explicable
+  et sans surface d'injection), et recommande le **playbook** adapté. Priorité :
+  AD > web-app > windows > linux > network-host. Chaque `Profile` porte ses raisons.
+- **`ClassifyStore(store)`** : classe tous les hôtes du graph.
+
+### 6.8 `playbook` — chargement des playbooks
+
+- **`Load` / `ParseAndValidate`** : transforment un playbook YAML en structures
+  (`Playbook` / `Phase` / `Step`) **validées** : nom et `target_type` obligatoires,
+  au moins une phase, chaque step a une `action`, et les catégories (`category`,
+  `gated_by_roe`) sont des catégories connues, **jamais un interdit dur**. YAML lu
+  en mode strict. Le moteur d'exécution (évaluation des conditions `when`,
+  progression entre phases) reste à implémenter.
+
+### 6.9 `cmd/aria` — la CLI
 
 - Sans option : valide l'engagement et affiche son résumé (garde-fou n°1).
 - `-check <cible>` : indique si une cible est dans le périmètre.
 - `-recon` : assemble `OllamaClient` + `DockerRunner` + registre `port_scan` +
-  `Planner.RunRecon` + `Analyst.AnalyzeStore`, puis affiche hôtes/services/findings.
+  `Planner.RunRecon`, **profile** les hôtes (`profiler.ClassifyStore`), puis lance
+  `Analyst.AnalyzeStore` et affiche hôtes/services, profils et findings.
   Options : `-model`, `-network`, `-image`, `-max-steps`.
 
 ---
@@ -365,12 +389,13 @@ go test -race ./internal/graph/   # vérifie l'absence de course de données
 ## 10. État d'avancement & suite
 
 **Fait** : engagement · sandbox · tools/port_scan · graph · Planner (recon) ·
-Analyst · CLI recon · lab. Démo bout-en-bout fonctionnelle.
+Analyst · profiler · chargeur de playbooks (+ web.yaml, network-host.yaml) ·
+CLI recon · lab. Démo bout-en-bout fonctionnelle.
 
-**Suite prévue** : profiler + 2e playbook → tiers d'approbation + exploitation en
-lab → Reporter (rapport Markdown/PDF) → banc d'évaluation multi-modèles →
-polish/TUI. Le **journal d'audit** (`internal/audit`) sera branché sur la boucle de
-l'agent.
+**Suite prévue** : moteur d'exécution des playbooks (conditions `when`, progression
+entre phases) → tiers d'approbation + exploitation en lab → Reporter (rapport
+Markdown/PDF) → banc d'évaluation multi-modèles → polish/TUI. Le **journal d'audit**
+(`internal/audit`) sera branché sur la boucle de l'agent.
 
 **Raffinements connus** : filtrage egress par IP exacte côté hôte (chaîne
 `DOCKER-USER`) ; balayage de sous-réseau vérifié bloc par bloc ; port des findings
