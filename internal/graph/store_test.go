@@ -115,6 +115,31 @@ func TestSummary(t *testing.T) {
 	}
 }
 
+func TestMergeFindingsDeduplique(t *testing.T) {
+	s := NewStore()
+	f := Finding{Host: "192.168.56.10", Port: 80, Title: "nginx obsolète", Severity: "medium", Refs: []string{"CVE-1"}}
+
+	// Le même finding injecté deux fois ne doit compter qu'une fois.
+	s.MergeFindings([]Finding{f})
+	s.MergeFindings([]Finding{f})
+	// Un finding différent (autre titre) s'ajoute.
+	s.MergeFindings([]Finding{{Host: "192.168.56.10", Port: 80, Title: "en-tête manquant", Severity: "low"}})
+
+	got := s.Findings()
+	if len(got) != 2 {
+		t.Fatalf("attendu 2 findings uniques, obtenu %d", len(got))
+	}
+	if s.Summary().Findings != 2 {
+		t.Errorf("Summary.Findings = %d, attendu 2", s.Summary().Findings)
+	}
+
+	// Findings() doit renvoyer des copies : modifier le retour ne change pas le store.
+	got[0].Title = "modifié"
+	if s.Findings()[0].Title == "modifié" {
+		t.Error("Findings() ne renvoie pas des copies")
+	}
+}
+
 // TestMergeConcurrent vérifie l'absence de course de données (à lancer avec -race).
 func TestMergeConcurrent(t *testing.T) {
 	s := NewStore()

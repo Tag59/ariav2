@@ -24,3 +24,17 @@ type Service struct {
 	Product  string // logiciel (ex. "nginx"), si détecté
 	Version  string // version (ex. "1.18.0"), si détectée
 }
+
+// Finding est une vulnérabilité CANDIDATE : une hypothèse produite par l'analyse
+// (rôle Analyst), pas une preuve d'exploitation. L'opérateur reste seul juge.
+type Finding struct {
+	Host        string   // adresse de l'hôte concerné
+	Port        int      // port concerné (0 si sans objet)
+	Title       string   // intitulé court
+	Severity    string   // sévérité qualitative : info, low, medium, high, critical
+	Description string   // description du problème
+	Evidence    string   // preuve/indice ayant mené au finding (donnée observée)
+	Impact      string   // impact potentiel
+	Remediation string   // remédiation conseillée
+	Refs        []string // références (CVE, OWASP, MITRE...)
+}

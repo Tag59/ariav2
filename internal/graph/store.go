@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 )
@@ -17,11 +18,17 @@ import (
 type Store struct {
 	mu    sync.RWMutex
 	hosts map[string]*Host // clé : adresse de l'hôte
+
+	findings     []Finding
+	seenFindings map[string]bool // clé de dédoublonnage : hôte|port|titre
 }
 
 // NewStore crée un store vide.
 func NewStore() *Store {
-	return &Store{hosts: make(map[string]*Host)}
+	return &Store{
+		hosts:        make(map[string]*Host),
+		seenFindings: make(map[string]bool),
+	}
 }
 
 // Merge intègre une liste d'hôtes (typiquement la sortie d'un outil) dans le store.
@@ -106,17 +113,56 @@ func (s *Store) Host(addr string) (Host, bool) {
 	return copieTriee(h), true
 }
 
+// MergeFindings ajoute des findings en évitant les doublons (même hôte, port et
+// titre). Les nouveaux sont conservés dans l'ordre d'arrivée.
+func (s *Store) MergeFindings(fs []Finding) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range fs {
+		key := fmt.Sprintf("%s|%d|%s", f.Host, f.Port, f.Title)
+		if s.seenFindings[key] {
+			continue
+		}
+		s.seenFindings[key] = true
+		cp := f
+		cp.Refs = append([]string(nil), f.Refs...)
+		s.findings = append(s.findings, cp)
+	}
+}
+
+// Findings renvoie une copie des findings, triés par hôte puis port puis titre.
+func (s *Store) Findings() []Finding {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Finding, len(s.findings))
+	copy(out, s.findings)
+	for i := range out {
+		out[i].Refs = append([]string(nil), s.findings[i].Refs...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Host != out[j].Host {
+			return out[i].Host < out[j].Host
+		}
+		if out[i].Port != out[j].Port {
+			return out[i].Port < out[j].Port
+		}
+		return out[i].Title < out[j].Title
+	})
+	return out
+}
+
 // Summary est un décompte rapide du contenu du graph, pratique pour l'affichage.
 type Summary struct {
 	Hosts    int
 	Services int
+	Findings int
 }
 
-// Summary compte les hôtes et services accumulés.
+// Summary compte les hôtes, services et findings accumulés.
 func (s *Store) Summary() Summary {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	sum := Summary{Hosts: len(s.hosts)}
+	sum := Summary{Hosts: len(s.hosts), Findings: len(s.findings)}
 	for _, h := range s.hosts {
 		sum.Services += len(h.Services)
 	}
