@@ -11,6 +11,7 @@ import (
 type outilBidon struct{ nom string }
 
 func (o outilBidon) Name() string                               { return o.nom }
+func (o outilBidon) Description() string                        { return "outil de test" }
 func (o outilBidon) Category() engagement.Category              { return engagement.CatRecon }
 func (o outilBidon) RequiresApproval() bool                     { return false }
 func (o outilBidon) Prepare(map[string]any) (Invocation, error) { return Invocation{}, nil }

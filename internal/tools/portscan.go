@@ -36,6 +36,12 @@ func (p *PortScan) Name() string                  { return "port_scan" }
 func (p *PortScan) Category() engagement.Category { return engagement.CatRecon }
 func (p *PortScan) RequiresApproval() bool        { return false }
 
+func (p *PortScan) Description() string {
+	return "Scan de ports TCP d'un hôte unique (nmap). Paramètres : target (IP ou nom d'hôte, obligatoire), " +
+		"ports (top100|top1000|web|full, défaut top1000), timing (T2|T3|T4, défaut T3), " +
+		"service_detection (bool, défaut true)."
+}
+
 // presetsPorts associe un nom de preset aux arguments nmap correspondants.
 // On borne volontairement le choix : le LLM ne peut pas passer une liste de ports
 // arbitraire, seulement l'un de ces presets.
@@ -64,6 +70,12 @@ func (p *PortScan) Prepare(params map[string]any) (Invocation, error) {
 	}
 	if strings.TrimSpace(target) == "" {
 		return Invocation{}, fmt.Errorf("port_scan: le paramètre 'target' est obligatoire")
+	}
+	// On refuse les CIDR ici : le contrôle de scope raisonne cible par cible, et un
+	// bloc CIDR pourrait déborder du périmètre autorisé. Le balayage de sous-réseau
+	// sera une fonctionnalité dédiée, vérifiée bloc par bloc.
+	if strings.Contains(target, "/") {
+		return Invocation{}, fmt.Errorf("port_scan: 'target' doit être un hôte unique, pas un bloc CIDR (%q)", target)
 	}
 
 	preset, err := stringParam(params, "ports", "top1000")

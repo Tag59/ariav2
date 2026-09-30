@@ -37,6 +37,9 @@ type Output struct {
 type Tool interface {
 	// Name est l'identifiant stable utilisé par le Planner et les playbooks.
 	Name() string
+	// Description explique en une phrase ce que fait l'outil et quels paramètres
+	// il attend. Elle est présentée au LLM pour l'aider à choisir.
+	Description() string
 	// Category sert au filtrage par les règles d'engagement (RoE).
 	Category() engagement.Category
 	// RequiresApproval indique si l'action est intrusive et exige une validation
