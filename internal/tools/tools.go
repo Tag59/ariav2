@@ -28,10 +28,11 @@ type Invocation struct {
 	Spec sandbox.Spec
 }
 
-// Output regroupe la sortie structurée d'un outil après parsing. Pour l'instant
-// on ne remonte que des hôtes ; on enrichira (findings, preuves) plus tard.
+// Output regroupe la sortie structurée d'un outil après parsing : des hôtes/
+// services (ex. port_scan) et/ou des findings (ex. nuclei_scan).
 type Output struct {
-	Hosts []graph.Host
+	Hosts    []graph.Host
+	Findings []graph.Finding
 }
 
 // Tool est l'interface que tout adapter d'outil implémente.

@@ -247,6 +247,25 @@ func boolParam(params map[string]any, key string, def bool) (bool, error) {
 	return b, nil
 }
 
+// intParam lit un paramètre entier. Les nombres JSON arrivent en float64 dans une
+// map[string]any, on les convertit donc.
+func intParam(params map[string]any, key string, def int) (int, error) {
+	v, ok := params[key]
+	if !ok || v == nil {
+		return def, nil
+	}
+	switch x := v.(type) {
+	case float64:
+		return int(x), nil
+	case int:
+		return x, nil
+	case int64:
+		return int(x), nil
+	default:
+		return 0, fmt.Errorf("paramètre %q : entier attendu", key)
+	}
+}
+
 // --- structures de décodage du XML nmap (sous-ensemble utile) ---
 
 type nmapRun struct {
@@ -255,10 +274,11 @@ type nmapRun struct {
 }
 
 type nmapHost struct {
-	Status    nmapStatus     `xml:"status"`
-	Addresses []nmapAddr     `xml:"address"`
-	Hostnames []nmapHostname `xml:"hostnames>hostname"`
-	Ports     []nmapPort     `xml:"ports>port"`
+	Status      nmapStatus     `xml:"status"`
+	Addresses   []nmapAddr     `xml:"address"`
+	Hostnames   []nmapHostname `xml:"hostnames>hostname"`
+	Ports       []nmapPort     `xml:"ports>port"`
+	HostScripts []nmapScript   `xml:"hostscript>script"`
 }
 
 type nmapStatus struct {
@@ -275,10 +295,17 @@ type nmapHostname struct {
 }
 
 type nmapPort struct {
-	Protocol string      `xml:"protocol,attr"`
-	PortID   int         `xml:"portid,attr"`
-	State    nmapState   `xml:"state"`
-	Service  nmapService `xml:"service"`
+	Protocol string       `xml:"protocol,attr"`
+	PortID   int          `xml:"portid,attr"`
+	State    nmapState    `xml:"state"`
+	Service  nmapService  `xml:"service"`
+	Scripts  []nmapScript `xml:"script"`
+}
+
+// nmapScript est la sortie d'un script NSE (utilisé par smb_enum).
+type nmapScript struct {
+	ID     string `xml:"id,attr"`
+	Output string `xml:"output,attr"`
 }
 
 type nmapState struct {
