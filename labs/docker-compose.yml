@@ -1,0 +1,33 @@
+# Lab de démonstration ARIA — cible volontairement vulnérable, sur un réseau isolé.
+#
+# Lance une instance d'OWASP Juice Shop sur un réseau Docker dédié « aria-lab »,
+# avec une IP fixe (172.28.0.10) pour que le périmètre de l'engagement soit
+# prévisible. Le conteneur nmap d'ARIA sera attaché à CE MÊME réseau au moment du
+# scan (option -network aria-lab de la CLI) : il peut donc joindre la cible, et
+# rien d'autre du réseau de l'hôte.
+#
+# Démarrer :  docker compose -f labs/docker-compose.yml up -d
+# Arrêter  :  docker compose -f labs/docker-compose.yml down
+#
+# La cible est aussi publiée sur http://127.0.0.1:3000 pour que tu puisses la voir
+# dans un navigateur pendant la démo (retire la section "ports" pour une isolation
+# stricte sans accès depuis l'hôte).
+
+services:
+  juice-shop:
+    image: bkimminich/juice-shop
+    container_name: aria-juice-shop
+    networks:
+      aria-lab:
+        ipv4_address: 172.28.0.10
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+
+networks:
+  aria-lab:
+    name: aria-lab          # nom fixe, réutilisé par la CLI (-network aria-lab)
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

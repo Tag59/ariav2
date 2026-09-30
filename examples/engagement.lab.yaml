@@ -1,0 +1,31 @@
+# Engagement prêt à l'emploi pour le lab local (labs/docker-compose.yml).
+#
+# Le périmètre couvre le réseau Docker isolé « aria-lab » (172.28.0.0/24), où
+# tourne la cible Juice Shop à l'adresse 172.28.0.10.
+#
+# Démo :
+#   docker compose -f labs/docker-compose.yml up -d
+#   go run ./cmd/aria -engagement examples/engagement.lab.yaml -recon -network aria-lab
+
+name: "Lab local — OWASP Juice Shop"
+client: "Lab personnel (auto-hébergé)"
+
+authorization:
+  reference: "SELF-LAB-2026-001"
+  authorized_by: "Propriétaire du lab (moi-même)"
+  signed: true
+  valid_from: "2026-01-01"
+  valid_until: "2026-12-31"
+
+scope:
+  in:
+    - 172.28.0.10          # la cible Juice Shop (IP fixe définie dans le compose)
+  # Astuce : pour un scénario de découverte, on pourrait mettre tout le
+  # sous-réseau (172.28.0.0/24) et laisser ARIA identifier les hôtes actifs.
+  # On cible ici directement la VM pour une démo simple et sans ambiguïté.
+
+rules_of_engagement:
+  allowed_categories:
+    - recon
+    - enumeration
+    - vuln_scan
