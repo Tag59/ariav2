@@ -73,6 +73,22 @@ func TestAnalyzeCleInconnue(t *testing.T) {
 	}
 }
 
+func TestAnalyzePortFallback(t *testing.T) {
+	// Le LLM omet le port (0), mais l'hôte n'a qu'un seul service : le finding
+	// doit être rattaché à ce service (port 80).
+	fake := &fakeLLM{responses: [][]byte{
+		[]byte(`{"findings":[{"title":"x","severity":"low","port":0,"description":"d"}]}`),
+	}}
+	a := NewAnalyst(fake)
+	findings, err := a.Analyze(context.Background(), hoteExemple())
+	if err != nil {
+		t.Fatalf("Analyze : %v", err)
+	}
+	if len(findings) != 1 || findings[0].Port != 80 {
+		t.Errorf("port attendu 80 (repli sur le seul service), obtenu %+v", findings)
+	}
+}
+
 func TestAnalyzeStore(t *testing.T) {
 	store := graph.NewStore()
 	store.Merge([]graph.Host{hoteExemple()})

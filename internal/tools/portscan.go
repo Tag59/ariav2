@@ -173,7 +173,7 @@ func (p *PortScan) Parse(res sandbox.Result) (Output, error) {
 				Port:     port.PortID,
 				Protocol: port.Protocol,
 				State:    port.State.State,
-				Name:     port.Service.Name,
+				Name:     nomService(port.Service),
 				Product:  port.Service.Product,
 				Version:  port.Service.Version,
 			})
@@ -194,6 +194,18 @@ func choisirAdresse(addrs []nmapAddr) string {
 		return addrs[0].Addr
 	}
 	return ""
+}
+
+// nomService renvoie le nom du service. Repli : quand nmap n'a pas su classer le
+// service (il laisse alors une empreinte brute servicefp) mais que cette empreinte
+// est clairement une réponse HTTP, on classe le service en "http". On ne renvoie
+// jamais l'empreinte brute au LLM (elle contient la réponse de la cible : surface
+// d'injection) — on se contente d'un classement déterministe.
+func nomService(s nmapService) string {
+	if s.ServiceFP != "" && s.Name != "http" && strings.Contains(s.ServiceFP, "HTTP/") {
+		return "http"
+	}
+	return s.Name
 }
 
 func nomsHotes(hn []nmapHostname) []string {
@@ -274,7 +286,8 @@ type nmapState struct {
 }
 
 type nmapService struct {
-	Name    string `xml:"name,attr"`
-	Product string `xml:"product,attr"`
-	Version string `xml:"version,attr"`
+	Name      string `xml:"name,attr"`
+	Product   string `xml:"product,attr"`
+	Version   string `xml:"version,attr"`
+	ServiceFP string `xml:"servicefp,attr"` // empreinte brute quand -sV n'a pas su classer
 }

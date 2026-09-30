@@ -80,13 +80,19 @@ func (a *Analyst) Analyze(ctx context.Context, host graph.Host) ([]graph.Finding
 		if !severitesValides[f.Severity] {
 			return nil, fmt.Errorf("agent : sévérité invalide %q renvoyée par l'Analyst", f.Severity)
 		}
+		// Repli déterministe : si le LLM n'a pas renseigné de port mais que l'hôte
+		// n'a qu'un seul service, on rattache le finding à ce service.
+		port := f.Port
+		if port == 0 && len(host.Services) == 1 {
+			port = host.Services[0].Port
+		}
 		findings = append(findings, graph.Finding{
 			Host:        host.Address,
-			Port:        f.Port,
+			Port:        port,
 			Title:       f.Title,
 			Severity:    f.Severity,
 			Description: f.Description,
-			Evidence:    evidencePourPort(host, f.Port),
+			Evidence:    evidencePourPort(host, port),
 			Impact:      f.Impact,
 			Remediation: f.Remediation,
 			Refs:        f.Refs,
@@ -120,7 +126,7 @@ func findingsSchema() json.RawMessage {
 			"remediation": map[string]any{"type": "string"},
 			"refs":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		},
-		"required": []string{"title", "severity", "description"},
+		"required": []string{"title", "severity", "port", "description"},
 	}
 	schema := map[string]any{
 		"type":       "object",

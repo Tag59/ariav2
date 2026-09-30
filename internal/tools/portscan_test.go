@@ -133,3 +133,29 @@ func TestPortScanParseErreurs(t *testing.T) {
 		t.Error("erreur attendue pour un XML invalide")
 	}
 }
+
+// Quand nmap laisse un servicefp non classé mais clairement HTTP (cas réel de
+// Juice Shop sur le port 3000, nommé "ppp" par défaut), on doit le classer http.
+func TestPortScanParseHeuristiqueHTTP(t *testing.T) {
+	const xml = `<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <status state="up"/>
+    <address addr="172.28.0.10" addrtype="ipv4"/>
+    <ports>
+      <port protocol="tcp" portid="3000"><state state="open"/><service name="ppp" servicefp="SF-Port3000:V=7.95%r(GetRequest,HTTP/1.1 200 OK)"/></port>
+    </ports>
+  </host>
+</nmaprun>`
+	ps := NewPortScan("", sandbox.NetworkPolicy{Mode: sandbox.NetNone})
+	out, err := ps.Parse(sandbox.Result{Stdout: []byte(xml)})
+	if err != nil {
+		t.Fatalf("Parse : %v", err)
+	}
+	if len(out.Hosts) != 1 || len(out.Hosts[0].Services) != 1 {
+		t.Fatalf("structure inattendue : %+v", out.Hosts)
+	}
+	if got := out.Hosts[0].Services[0].Name; got != "http" {
+		t.Errorf("service attendu reclassé en http, obtenu %q", got)
+	}
+}
