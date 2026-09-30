@@ -50,7 +50,8 @@ func (s *SQLiProbe) ParamsSchema() json.RawMessage {
 			"port": {"type": "integer"},
 			"scheme": {"type": "string", "enum": ["http", "https"]},
 			"path": {"type": "string"},
-			"data": {"type": "string"}
+			"data": {"type": "string"},
+			"ignore_code": {"type": "integer"}
 		},
 		"required": ["target"]
 	}`)
@@ -104,15 +105,26 @@ func (s *SQLiProbe) Prepare(params map[string]any) (Invocation, error) {
 	if err != nil {
 		return Invocation{}, err
 	}
+	// ignore_code : code HTTP à ne pas considérer comme un échec (ex. 401 renvoyé
+	// par un login pour des identifiants invalides), sinon sqlmap s'arrête.
+	ignoreCode, err := intParam(params, "ignore_code", 0)
+	if err != nil {
+		return Invocation{}, err
+	}
 
 	url := fmt.Sprintf("%s://%s:%d%s", scheme, target, port, path)
 
 	// Détection uniquement : pas de --dump, pas de --os-*. --batch = non interactif.
+	// Niveau/risque élevés pour détecter les injections sans erreur SQL visible
+	// (ex. bascule booléenne d'un login). Verbosité par défaut : le rapport
+	// d'injection apparaît sur stdout (parsé par Parse).
 	argv := []string{
 		"sqlmap", "-u", url,
-		"--batch", "--level=1", "--risk=1", "--technique=BEU",
-		"--smart", "--flush-session", "--disable-coloring",
-		"--output-dir=/tmp/sqlmap", "-v", "0",
+		"--batch", "--level=5", "--risk=3", "--technique=BEU",
+		"--flush-session", "--disable-coloring", "--output-dir=/tmp/sqlmap",
+	}
+	if ignoreCode != 0 {
+		argv = append(argv, fmt.Sprintf("--ignore-code=%d", ignoreCode))
 	}
 	if data != "" {
 		argv = append(argv, "--data", data)

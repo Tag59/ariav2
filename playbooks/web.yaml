@@ -150,8 +150,11 @@ phases:
         params:
           # Point d'injection connu d'OWASP Juice Shop : le champ email du login.
           # sqlmap teste ce paramètre en détection seule (pas d'exfiltration).
+          # ignore_code 401 : le login renvoie 401 pour des identifiants invalides,
+          # sqlmap ne doit pas s'arrêter dessus.
           path: "/rest/user/login"
           data: '{"email":"test@test.com","password":"test"}'
+          ignore_code: 401
         rationale: "Confirmer de façon NON destructive une injection SQL (login) ; ne jamais dumper ni altérer de données."
         refs: ["WSTG-INPV-05", "CWE-89"]
 
