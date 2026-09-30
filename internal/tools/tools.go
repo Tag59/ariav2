@@ -8,6 +8,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -40,6 +41,10 @@ type Tool interface {
 	// Description explique en une phrase ce que fait l'outil et quels paramètres
 	// il attend. Elle est présentée au LLM pour l'aider à choisir.
 	Description() string
+	// ParamsSchema renvoie le schéma JSON des paramètres de l'outil. Le Planner
+	// s'en sert pour CONTRAINDRE la sortie du LLM : le modèle ne peut produire que
+	// des paramètres conformes (les valeurs restent ensuite validées par Prepare).
+	ParamsSchema() json.RawMessage
 	// Category sert au filtrage par les règles d'engagement (RoE).
 	Category() engagement.Category
 	// RequiresApproval indique si l'action est intrusive et exige une validation

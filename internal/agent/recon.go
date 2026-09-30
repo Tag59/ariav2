@@ -44,8 +44,14 @@ func (p *Planner) RunRecon(ctx context.Context, store *graph.Store, runner sandb
 			return steps, fmt.Errorf("agent : outil inconnu %q", d.Action)
 		}
 
+		// Second appel au LLM : les paramètres, contraints par le schéma de l'outil.
+		params, err := p.Params(ctx, tool, store)
+		if err != nil {
+			return steps, fmt.Errorf("agent : obtention des paramètres pour %q : %w", d.Action, err)
+		}
+
 		// Prepare valide et borne les paramètres proposés par le LLM.
-		inv, err := tool.Prepare(d.Params)
+		inv, err := tool.Prepare(params)
 		if err != nil {
 			return steps, fmt.Errorf("agent : paramètres invalides pour %q : %w", d.Action, err)
 		}

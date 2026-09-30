@@ -49,6 +49,14 @@ const xmlNmap = `<?xml version="1.0"?>
   </host>
 </nmaprun>`
 
+// Réponses réutilisables pour les deux appels du Planner.
+var (
+	repScanAction = []byte(`{"action":"port_scan","rationale":"découvrir les services"}`)
+	repStopAction = []byte(`{"action":"stop","rationale":"recon suffisante"}`)
+	repParamsOK   = []byte(`{"target":"192.168.56.10"}`)
+	repParamsHors = []byte(`{"target":"8.8.8.8"}`)
+)
+
 // setup construit un engagement valide et un registre contenant port_scan.
 func setup(t *testing.T) (*engagement.Engagement, *tools.Registry) {
 	t.Helper()
@@ -74,20 +82,18 @@ func TestNextDecodeEtValidation(t *testing.T) {
 	store := graph.NewStore()
 
 	// Décision valide.
-	p := NewPlanner(&fakeLLM{responses: [][]byte{
-		[]byte(`{"action":"port_scan","params":{"target":"192.168.56.10"},"rationale":"découvrir les services"}`),
-	}}, reg, eng)
+	p := NewPlanner(&fakeLLM{responses: [][]byte{repScanAction}}, reg, eng)
 	d, err := p.Next(context.Background(), store)
 	if err != nil {
 		t.Fatalf("Next : %v", err)
 	}
-	if d.Action != "port_scan" || d.Params["target"] != "192.168.56.10" {
-		t.Errorf("décision inattendue : %+v", d)
+	if d.Action != "port_scan" {
+		t.Errorf("action inattendue : %+v", d)
 	}
 
 	// Action hors liste -> refus.
 	p2 := NewPlanner(&fakeLLM{responses: [][]byte{
-		[]byte(`{"action":"evil_tool","params":{},"rationale":"x"}`),
+		[]byte(`{"action":"evil_tool","rationale":"x"}`),
 	}}, reg, eng)
 	if _, err := p2.Next(context.Background(), store); err == nil {
 		t.Error("une action hors de la liste autorisée aurait dû être refusée")
@@ -102,15 +108,27 @@ func TestNextDecodeEtValidation(t *testing.T) {
 	}
 }
 
+func TestParams(t *testing.T) {
+	eng, reg := setup(t)
+	store := graph.NewStore()
+	tool, _ := reg.Get("port_scan")
+
+	p := NewPlanner(&fakeLLM{responses: [][]byte{repParamsOK}}, reg, eng)
+	params, err := p.Params(context.Background(), tool, store)
+	if err != nil {
+		t.Fatalf("Params : %v", err)
+	}
+	if params["target"] != "192.168.56.10" {
+		t.Errorf("paramètres inattendus : %+v", params)
+	}
+}
+
 func TestRunReconCheminNominal(t *testing.T) {
 	eng, reg := setup(t)
 	store := graph.NewStore()
 
-	// Le LLM propose un scan, puis s'arrête.
-	fake := &fakeLLM{responses: [][]byte{
-		[]byte(`{"action":"port_scan","params":{"target":"192.168.56.10"},"rationale":"scan initial"}`),
-		[]byte(`{"action":"stop","rationale":"recon suffisante"}`),
-	}}
+	// Étape 1 : action port_scan puis ses paramètres. Étape 2 : stop.
+	fake := &fakeLLM{responses: [][]byte{repScanAction, repParamsOK, repStopAction}}
 	p := NewPlanner(fake, reg, eng)
 	runner := &fakeRunner{stdout: []byte(xmlNmap)}
 
@@ -125,7 +143,6 @@ func TestRunReconCheminNominal(t *testing.T) {
 		t.Errorf("étape inattendue : %+v", steps[0])
 	}
 
-	// Le graph doit contenir l'hôte scanné.
 	hosts := store.Hosts()
 	if len(hosts) != 1 || hosts[0].Address != "192.168.56.10" {
 		t.Fatalf("graph inattendu : %+v", hosts)
@@ -139,10 +156,8 @@ func TestRunReconRefuseHorsScope(t *testing.T) {
 	eng, reg := setup(t)
 	store := graph.NewStore()
 
-	// Le LLM propose une cible hors périmètre : la boucle doit refuser.
-	fake := &fakeLLM{responses: [][]byte{
-		[]byte(`{"action":"port_scan","params":{"target":"8.8.8.8"},"rationale":"curiosité"}`),
-	}}
+	// Action valide, mais paramètres avec une cible hors périmètre.
+	fake := &fakeLLM{responses: [][]byte{repScanAction, repParamsHors}}
 	p := NewPlanner(fake, reg, eng)
 	runner := &fakeRunner{stdout: []byte(xmlNmap)}
 
@@ -150,7 +165,6 @@ func TestRunReconRefuseHorsScope(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "HORS SCOPE") {
 		t.Errorf("attendu un refus pour cible hors scope, obtenu : %v", err)
 	}
-	// Rien ne doit avoir été exécuté ni stocké.
 	if store.Summary().Hosts != 0 {
 		t.Error("aucun hôte ne devrait avoir été ajouté après un refus de scope")
 	}
@@ -160,9 +174,12 @@ func TestRunReconGardeMaxSteps(t *testing.T) {
 	eng, reg := setup(t)
 	store := graph.NewStore()
 
-	// Le LLM propose toujours un scan (ne s'arrête jamais) : maxSteps borne la boucle.
-	scan := []byte(`{"action":"port_scan","params":{"target":"192.168.56.10"},"rationale":"encore"}`)
-	fake := &fakeLLM{responses: [][]byte{scan, scan, scan, scan, scan, scan}}
+	// Le LLM propose toujours un scan (ne s'arrête jamais) : 2 réponses par étape.
+	fake := &fakeLLM{responses: [][]byte{
+		repScanAction, repParamsOK,
+		repScanAction, repParamsOK,
+		repScanAction, repParamsOK,
+	}}
 	p := NewPlanner(fake, reg, eng)
 	runner := &fakeRunner{stdout: []byte(xmlNmap)}
 

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"strings"
@@ -40,6 +41,21 @@ func (p *PortScan) Description() string {
 	return "Scan de ports TCP d'un hôte unique (nmap). Paramètres : target (IP ou nom d'hôte, obligatoire), " +
 		"ports (top100|top1000|web|full, défaut top1000), timing (T2|T3|T4, défaut T3), " +
 		"service_detection (bool, défaut true)."
+}
+
+// ParamsSchema contraint les paramètres acceptés. Seul target est obligatoire ;
+// les autres ont des valeurs par défaut dans Prepare.
+func (p *PortScan) ParamsSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"target": {"type": "string", "description": "IP ou nom d'hôte unique (pas de CIDR)"},
+			"ports": {"type": "string", "enum": ["top100", "top1000", "web", "full"]},
+			"timing": {"type": "string", "enum": ["T2", "T3", "T4"]},
+			"service_detection": {"type": "boolean"}
+		},
+		"required": ["target"]
+	}`)
 }
 
 // presetsPorts associe un nom de preset aux arguments nmap correspondants.

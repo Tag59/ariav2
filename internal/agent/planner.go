@@ -16,13 +16,13 @@ import (
 // est jugée suffisante.
 const actionStop = "stop"
 
-// Decision est la sortie STRICTE attendue du LLM : quelle action typée mener
-// ensuite, avec quels paramètres et pourquoi. Aucune autre clé n'est tolérée
-// (voir llm.DecodeStrict).
+// Decision est la première sortie STRICTE attendue du LLM : quelle action typée
+// mener ensuite, et pourquoi. Les paramètres sont demandés dans un second temps
+// (voir Params), contraints par le schéma de l'outil choisi. Aucune autre clé
+// n'est tolérée (voir llm.DecodeStrict).
 type Decision struct {
-	Action    string         `json:"action"`    // nom d'un outil, ou "stop"
-	Params    map[string]any `json:"params"`    // paramètres passés à l'outil
-	Rationale string         `json:"rationale"` // justification, pour l'opérateur
+	Action    string `json:"action"`    // nom d'un outil, ou "stop"
+	Rationale string `json:"rationale"` // justification, pour l'opérateur
 }
 
 // Planner choisit la prochaine action de reconnaissance. Il RAISONNE (via le LLM)
@@ -86,6 +86,49 @@ func (p *Planner) Next(ctx context.Context, store *graph.Store) (Decision, error
 	return d, nil
 }
 
+// Params fait le second appel : demander au LLM les paramètres de l'outil choisi,
+// en contraignant la sortie au schéma de l'outil. Les valeurs restent ensuite
+// validées et bornées par tool.Prepare.
+func (p *Planner) Params(ctx context.Context, tool tools.Tool, store *graph.Store) (map[string]any, error) {
+	prompt := llm.Prompt{
+		System: systemPrompt,
+		User:   p.paramsUserPrompt(tool, store),
+		Format: tool.ParamsSchema(),
+	}
+	raw, err := p.llm.Generate(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, fmt.Errorf("agent : paramètres illisibles renvoyés par le LLM : %w", err)
+	}
+	return params, nil
+}
+
+// paramsUserPrompt demande les paramètres pour un outil donné, en rappelant les
+// cibles autorisées afin que le LLM renseigne une cible dans le périmètre.
+func (p *Planner) paramsUserPrompt(tool tools.Tool, store *graph.Store) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Fournis les paramètres pour l'action %q.\n", tool.Name())
+	fmt.Fprintf(&b, "Description : %s\n\n", tool.Description())
+
+	in, _ := p.eng.ScopeStrings()
+	b.WriteString("Cibles autorisées (choisis-en une dans ce périmètre) :\n")
+	for _, s := range in {
+		fmt.Fprintf(&b, "  - %s\n", s)
+	}
+
+	hosts := store.Hosts()
+	if len(hosts) > 0 {
+		b.WriteString("\nHôtes déjà connus :\n")
+		for _, h := range hosts {
+			fmt.Fprintf(&b, "  - %s\n", h.Address)
+		}
+	}
+	return b.String()
+}
+
 // reconTools renvoie les outils de catégorie recon autorisés par les RoE, indexés
 // par nom.
 func (p *Planner) reconTools() map[string]tools.Tool {
@@ -111,7 +154,6 @@ func decisionSchema(reconTools map[string]tools.Tool) json.RawMessage {
 		"type": "object",
 		"properties": map[string]any{
 			"action":    map[string]any{"type": "string", "enum": actions},
-			"params":    map[string]any{"type": "object"},
 			"rationale": map[string]any{"type": "string"},
 		},
 		"required": []string{"action", "rationale"},
