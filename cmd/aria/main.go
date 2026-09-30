@@ -21,6 +21,7 @@ import (
 	"github.com/Tag59/aria/internal/engagement"
 	"github.com/Tag59/aria/internal/graph"
 	"github.com/Tag59/aria/internal/llm"
+	"github.com/Tag59/aria/internal/profiler"
 	"github.com/Tag59/aria/internal/sandbox"
 	"github.com/Tag59/aria/internal/tools"
 )
@@ -133,6 +134,14 @@ func lancerRecon(eng *engagement.Engagement, model, network, image string, maxSt
 	}
 	for _, s := range steps {
 		fmt.Printf("  • %s %v (exit %d, %d hôte(s)) — %s\n", s.Action, s.Targets, s.ExitCode, s.HostsFound, s.Rationale)
+	}
+
+	fmt.Println("\n→ Profilage des hôtes...")
+	for _, prof := range profiler.ClassifyStore(store) {
+		fmt.Printf("  • %s\n", prof)
+		for _, r := range prof.Reasons {
+			fmt.Printf("      - %s\n", r)
+		}
 	}
 
 	fmt.Println("\n→ Analyse des services découverts...")
