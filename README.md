@@ -77,6 +77,10 @@ proposes the next step and writes — the human keeps the hand on exploitation.
 Full details — state machine, Tool contract, playbook format, and **threat model**
 (prompt injection, scope escape) — are in [`docs/architecture.md`](docs/architecture.md).
 
+**Documentation détaillée (français, à jour)** : [`docs/FONCTIONNEMENT.md`](docs/FONCTIONNEMENT.md)
+décrit l'arborescence complète, le rôle de chaque paquet, la chaîne de garde-fous
+et une démo pas à pas.
+
 ## Repository layout
 
 ```
