@@ -122,7 +122,12 @@ aria/
 │   │   ├── condition.go        #   EvalWhen : évaluation des conditions `when`
 │   │   ├── engine.go           #   Engine.PlanForHost : plan applicable (when+RoE)
 │   │   └── *_test.go
-│   ├── report/                 # ⏳ génération de rapport (placeholder)
+│   ├── report/                 # ✅ rapport Markdown / JSON / HTML
+│   │   ├── report.go           #   Model + BuildModel (tri/compte des findings)
+│   │   ├── render.go           #   rendus Markdown et JSON
+│   │   ├── html.go             #   rendu HTML (html/template, échappé)
+│   │   ├── files.go            #   WriteAll (md/json/html)
+│   │   └── report_test.go
 │   └── audit/                  # ⏳ journal d'audit (placeholder)
 │
 ├── playbooks/
@@ -349,7 +354,17 @@ une action — qui échouera ensuite aux étapes 3-4.
   Planner raisonnera. L'exécution autonome pilotée par les phases (faire enchaîner
   au Planner les steps applicables) viendra avec les adapters d'énumération/vuln.
 
-### 6.9 `cmd/aria` — la CLI
+### 6.9 `report` — génération du rapport
+
+- **`BuildModel`** : assemble le modèle (engagement, hôtes/services, findings triés
+  par sévérité, décompte par sévérité, journal des actions).
+- **`Markdown` / `JSON` / `HTML`** : trois rendus. Le HTML est une page autonome
+  (badges de sévérité) rendue via `html/template` — tout contenu issu de la cible
+  (preuve, description) est **échappé**, donc une preuve piégée ne peut pas injecter
+  de code dans le rapport. **`WriteAll`** écrit les trois fichiers dans un dossier.
+- PDF : imprimer le HTML depuis un navigateur (Ctrl/Cmd+P → PDF).
+
+### 6.10 `cmd/aria` — la CLI
 
 - Sans option : valide l'engagement et affiche son résumé (garde-fou n°1).
 - `-check <cible>` : indique si une cible est dans le périmètre.
@@ -395,8 +410,9 @@ docker build -t aria/sqlmap -f docker/sqlmap.Dockerfile docker
 # 2. Démarrer le lab (OWASP Juice Shop sur le réseau isolé aria-lab)
 docker compose -f labs/docker-compose.yml up -d
 
-# 3. Lancer recon + profilage + exécution autonome du plan contre la cible
-go run ./cmd/aria -engagement examples/engagement.lab.yaml -recon -network aria-lab
+# 3. Lancer recon + profilage + exécution autonome, et écrire le rapport
+go run ./cmd/aria -engagement examples/engagement.lab.yaml -recon -network aria-lab -report reports
+# -> reports/report.md, reports/report.json, reports/report.html (ouvrir le HTML, imprimer en PDF)
 
 # 3bis. Avec exploitation activée : chaque action intrusive demande une validation
 #       (dry-run affiché ; répondre y pour l'exécuter, N/entrée non interactive = refus)
@@ -436,14 +452,15 @@ go test -race ./internal/graph/   # vérifie l'absence de course de données
 
 **Fait** : engagement · sandbox · tools (port_scan, nuclei_scan, smb_enum,
 sqli_probe) · graph · Planner (recon) · Analyst · profiler · playbooks (moteur
-`when`/plan) · exécution autonome par phases (Executor) · **tiers d'approbation
-(Approver + dry-run) et 1re exploitation gated (sqli_probe)** · CLI recon · lab.
-Démo bout-en-bout fonctionnelle (recon → profil → plan → nuclei → exploitation
-sous validation humaine).
+`when`/plan) · exécution autonome par phases (Executor) · tiers d'approbation
+(Approver + dry-run) et 1re exploitation gated (sqli_probe) · **Reporter
+(Markdown/JSON/HTML)** · CLI recon · lab. Démo bout-en-bout fonctionnelle
+(recon → profil → plan → nuclei → exploitation sous validation humaine → rapport).
 
-**Suite prévue** : Reporter (rapport Markdown/PDF) → banc d'évaluation
-multi-modèles → polish/TUI. Le **journal d'audit** (`internal/audit`) sera branché
-sur la boucle de l'agent (traçabilité des approbations notamment).
+**Suite prévue** : banc d'évaluation multi-modèles → polish/TUI (+ GIF). Le
+**journal d'audit** (`internal/audit`) sera branché sur la boucle de l'agent
+(traçabilité des approbations notamment). PDF : impression du HTML pour l'instant ;
+une génération PDF dédiée (ex. conteneur weasyprint) pourra être ajoutée.
 
 **Raffinements connus** : filtrage egress par IP exacte côté hôte (chaîne
 `DOCKER-USER`) ; balayage de sous-réseau vérifié bloc par bloc ; dédoublonnage des
