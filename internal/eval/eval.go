@@ -100,6 +100,13 @@ func Run(cfg Config) []ModelResult {
 		analyst := agent.NewAnalyst(client)
 		r := ModelResult{Model: mdl, Runs: cfg.Runs}
 
+		// Préchauffage (non chronométré) : charge le modèle en VRAM pour que la
+		// première latence mesurée ne soit pas faussée par le temps de chargement.
+		if cfg.Progress != nil {
+			cfg.Progress(mdl + " — préchauffage")
+		}
+		_, _ = planner.Next(ctx, graph.NewStore())
+
 		for i := 0; i < cfg.Runs; i++ {
 			if cfg.Progress != nil {
 				cfg.Progress(fmt.Sprintf("%s — run %d/%d", mdl, i+1, cfg.Runs))

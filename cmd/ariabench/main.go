@@ -74,10 +74,12 @@ func decouper(s string) []string {
 // engagementBench fournit un engagement de test (toutes catégories activées) pour
 // que le Planner puisse proposer ses actions et que Prepare valide les paramètres.
 func engagementBench() (*engagement.Engagement, error) {
+	// Scope = une cible hôte CONCRÈTE (pas un CIDR) : le scénario Planner attend que
+	// le modèle propose un scan de cet hôte unique (port_scan refuse les CIDR).
 	const yml = `
 name: "Banc d'évaluation ARIA"
 authorization: {reference: BENCH, authorized_by: bench, signed: true, valid_from: "2026-01-01", valid_until: "2030-12-31"}
-scope: {in: ["10.0.0.0/8"]}
+scope: {in: ["10.0.0.10"]}
 rules_of_engagement: {allowed_categories: [recon, enumeration, vuln_scan, exploitation]}
 `
 	return engagement.ParseAndValidate([]byte(yml))
