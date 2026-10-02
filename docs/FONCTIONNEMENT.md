@@ -64,8 +64,9 @@ aria/
 ├── .gitignore                  # ignore binaires, artefacts de mission, etc.
 ├── README.md                   # disclaimer + principes + schéma + statut
 │
-├── cmd/aria/
-│   └── main.go                 # CLI : valide l'engagement, -check <cible>, -recon
+├── cmd/
+│   ├── aria/main.go            # CLI/TUI : -check, -recon, -tui, -report
+│   └── ariabench/main.go       # banc d'évaluation multi-modèles
 │
 ├── internal/                   # code privé de l'application
 │   ├── engagement/             # ✅ périmètre + RoE + validation (cœur des garde-fous)
@@ -133,6 +134,10 @@ aria/
 │   │   ├── view.go             #   rendu Lipgloss + modale d'approbation
 │   │   ├── approver.go         #   approbateur relié à la modale
 │   │   └── tui_test.go
+│   ├── eval/                   # ✅ banc d'évaluation multi-modèles
+│   │   ├── eval.go             #   scénarios Planner/Analyst + métriques
+│   │   ├── render.go           #   tableaux console / Markdown
+│   │   └── eval_test.go
 │   └── audit/                  # ⏳ journal d'audit (placeholder)
 │
 ├── playbooks/
@@ -385,10 +390,22 @@ une action — qui échouera ensuite aux étapes 3-4.
 
 - Sans option : valide l'engagement et affiche son résumé (garde-fou n°1).
 - `-check <cible>` : indique si une cible est dans le périmètre.
-- `-recon` : assemble `OllamaClient` + `DockerRunner` + registre `port_scan` +
-  `Planner.RunRecon`, **profile** les hôtes (`profiler.ClassifyStore`), puis lance
-  `Analyst.AnalyzeStore` et affiche hôtes/services, profils et findings.
-  Options : `-model`, `-network`, `-image`, `-max-steps`.
+- `-recon` : recon + profilage + exécution autonome du plan + analyse, puis affiche
+  hôtes/services, profils et findings. `-report <dir>` écrit le rapport.
+- `-tui` : même mission dans l'interface terminal.
+  Options : `-model`, `-network`, `-image`, `-nuclei-image`, `-sqlmap-image`,
+  `-max-steps`, `-playbooks`, `-report`.
+
+### 6.12 `eval` / `ariabench` — banc d'évaluation
+
+- **`eval.Run`** rejoue deux scénarios (Planner sur graph vide ; Analyst sur un
+  service web connu) contre chaque modèle, N fois, et agrège des métriques
+  **objectives** : décision valide, action attendue, paramètres acceptés par
+  `Prepare`, analyse valide, findings produits, latence par rôle. Le client LLM est
+  injectable (fake en test).
+- **`cmd/ariabench`** : `ariabench -models qwen3:8b,llama3.1 -runs 5 -out bench.md`.
+  N'exécute aucun outil (il n'évalue que les décisions du LLM) ; il faut juste
+  Ollama lancé avec les modèles récupérés.
 
 ---
 
@@ -475,13 +492,14 @@ sqli_probe) · graph · Planner (recon) · Analyst · profiler · playbooks (mot
 `when`/plan) · exécution autonome par phases (Executor) · tiers d'approbation
 (Approver + dry-run) et 1re exploitation gated (sqli_probe) · Reporter
 (Markdown/JSON/HTML) · **TUI (dashboard Bubble Tea + modale d'approbation)** ·
-CLI recon · lab. Démo bout-en-bout fonctionnelle
-(recon → profil → plan → nuclei → exploitation sous validation humaine → rapport).
+CLI recon · **banc d'évaluation multi-modèles (ariabench)** · lab. Démo
+bout-en-bout fonctionnelle (recon → profil → plan → nuclei → exploitation sous
+validation humaine → rapport).
 
-**Suite prévue** : banc d'évaluation multi-modèles ; GIF de démonstration. Le
-**journal d'audit** (`internal/audit`) sera branché sur la boucle de l'agent
-(traçabilité des approbations notamment). PDF : impression du HTML pour l'instant ;
-une génération PDF dédiée (ex. conteneur weasyprint) pourra être ajoutée.
+**Suite prévue** : GIF de démonstration (capture TUI) ; **journal d'audit**
+(`internal/audit`) branché sur la boucle de l'agent (traçabilité des approbations).
+PDF : impression du HTML pour l'instant ; une génération PDF dédiée (ex. conteneur
+weasyprint) pourra être ajoutée.
 
 **Raffinements connus** : filtrage egress par IP exacte côté hôte (chaîne
 `DOCKER-USER`) ; balayage de sous-réseau vérifié bloc par bloc ; dédoublonnage des
