@@ -73,14 +73,18 @@ func (p *Planner) RunRecon(ctx context.Context, store *graph.Store, runner sandb
 		}
 		store.Merge(out.Hosts)
 
-		steps = append(steps, Step{
+		st := Step{
 			Action:     d.Action,
 			Targets:    inv.Targets,
 			Rationale:  d.Rationale,
 			ExitCode:   res.ExitCode,
 			HostsFound: len(out.Hosts),
 			Status:     "exécuté",
-		})
+		}
+		steps = append(steps, st)
+		if p.OnStep != nil {
+			p.OnStep(st)
+		}
 	}
 
 	return steps, nil

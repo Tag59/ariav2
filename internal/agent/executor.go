@@ -24,6 +24,10 @@ type Executor struct {
 	eng      *engagement.Engagement
 	runner   sandbox.Runner
 	approver Approver
+
+	// OnStep, s'il est défini, est appelé après chaque step (exécuté ou refusé).
+	// Sert à alimenter une interface (TUI) en temps réel. Optionnel.
+	OnStep func(Step)
 }
 
 // NewExecutor assemble un Executor. Si approver est nil, toute action nécessitant
@@ -74,12 +78,16 @@ func (e *Executor) ExecutePlaybook(ctx context.Context, store *graph.Store, h gr
 					return steps, fmt.Errorf("agent : approbation de %q : %w", st.Action, err)
 				}
 				if !ok {
-					steps = append(steps, Step{
+					refuse := Step{
 						Action:    st.Action,
 						Targets:   inv.Targets,
 						Rationale: st.Rationale,
 						Status:    "refusé",
-					})
+					}
+					steps = append(steps, refuse)
+					if e.OnStep != nil {
+						e.OnStep(refuse)
+					}
 					continue // non approuvé : on n'exécute pas
 				}
 			}
@@ -107,14 +115,18 @@ func (e *Executor) ExecutePlaybook(ctx context.Context, store *graph.Store, h gr
 			store.Merge(out.Hosts)
 			store.MergeFindings(out.Findings)
 
-			steps = append(steps, Step{
+			done := Step{
 				Action:     st.Action,
 				Targets:    inv.Targets,
 				Rationale:  st.Rationale,
 				ExitCode:   res.ExitCode,
 				HostsFound: len(out.Hosts),
 				Status:     "exécuté",
-			})
+			}
+			steps = append(steps, done)
+			if e.OnStep != nil {
+				e.OnStep(done)
+			}
 		}
 	}
 	return steps, nil

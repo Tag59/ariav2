@@ -32,6 +32,10 @@ type Planner struct {
 	llm   llm.Client
 	tools *tools.Registry
 	eng   *engagement.Engagement
+
+	// OnStep, s'il est défini, est appelé après chaque action exécutée. Sert à
+	// alimenter une interface (TUI) en temps réel. Optionnel.
+	OnStep func(Step)
 }
 
 // NewPlanner assemble un Planner.
