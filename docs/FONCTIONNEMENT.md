@@ -128,6 +128,11 @@ aria/
 │   │   ├── html.go             #   rendu HTML (html/template, échappé)
 │   │   ├── files.go            #   WriteAll (md/json/html)
 │   │   └── report_test.go
+│   ├── tui/                    # ✅ interface terminal (Bubble Tea)
+│   │   ├── tui.go              #   modèle, messages, goroutine de mission
+│   │   ├── view.go             #   rendu Lipgloss + modale d'approbation
+│   │   ├── approver.go         #   approbateur relié à la modale
+│   │   └── tui_test.go
 │   └── audit/                  # ⏳ journal d'audit (placeholder)
 │
 ├── playbooks/
@@ -364,7 +369,19 @@ une action — qui échouera ensuite aux étapes 3-4.
   de code dans le rapport. **`WriteAll`** écrit les trois fichiers dans un dossier.
 - PDF : imprimer le HTML depuis un navigateur (Ctrl/Cmd+P → PDF).
 
-### 6.10 `cmd/aria` — la CLI
+### 6.10 `tui` — interface terminal
+
+- Dashboard Bubble Tea qui déroule la mission **en direct** : phases, hôtes/
+  services, findings colorés par sévérité, journal.
+- La mission tourne dans une goroutine qui communique avec l'interface uniquement
+  par messages ; l'`agent` l'alimente via les hooks `Planner.OnStep` /
+  `Executor.OnStep`.
+- **Modale d'approbation** : quand l'Executor rencontre une action intrusive,
+  l'`approver` TUI affiche un dry-run plein écran et bloque la goroutine jusqu'à la
+  décision (y/n) de l'opérateur — le garde-fou n°4, en version graphique.
+- Lancement : `-tui` (voir §6.11).
+
+### 6.11 `cmd/aria` — la CLI
 
 - Sans option : valide l'engagement et affiche son résumé (garde-fou n°1).
 - `-check <cible>` : indique si une cible est dans le périmètre.
@@ -414,6 +431,9 @@ docker compose -f labs/docker-compose.yml up -d
 go run ./cmd/aria -engagement examples/engagement.lab.yaml -recon -network aria-lab -report reports
 # -> reports/report.md, reports/report.json, reports/report.html (ouvrir le HTML, imprimer en PDF)
 
+# 3ter. Mode interface terminal (TUI) : mission en direct + modale d'approbation
+go run ./cmd/aria -engagement examples/engagement.lab-exploit.yaml -tui -network aria-lab -report reports
+
 # 3bis. Avec exploitation activée : chaque action intrusive demande une validation
 #       (dry-run affiché ; répondre y pour l'exécuter, N/entrée non interactive = refus)
 go run ./cmd/aria -engagement examples/engagement.lab-exploit.yaml -recon -network aria-lab
@@ -453,11 +473,12 @@ go test -race ./internal/graph/   # vérifie l'absence de course de données
 **Fait** : engagement · sandbox · tools (port_scan, nuclei_scan, smb_enum,
 sqli_probe) · graph · Planner (recon) · Analyst · profiler · playbooks (moteur
 `when`/plan) · exécution autonome par phases (Executor) · tiers d'approbation
-(Approver + dry-run) et 1re exploitation gated (sqli_probe) · **Reporter
-(Markdown/JSON/HTML)** · CLI recon · lab. Démo bout-en-bout fonctionnelle
+(Approver + dry-run) et 1re exploitation gated (sqli_probe) · Reporter
+(Markdown/JSON/HTML) · **TUI (dashboard Bubble Tea + modale d'approbation)** ·
+CLI recon · lab. Démo bout-en-bout fonctionnelle
 (recon → profil → plan → nuclei → exploitation sous validation humaine → rapport).
 
-**Suite prévue** : banc d'évaluation multi-modèles → polish/TUI (+ GIF). Le
+**Suite prévue** : banc d'évaluation multi-modèles ; GIF de démonstration. Le
 **journal d'audit** (`internal/audit`) sera branché sur la boucle de l'agent
 (traçabilité des approbations notamment). PDF : impression du HTML pour l'instant ;
 une génération PDF dédiée (ex. conteneur weasyprint) pourra être ajoutée.

@@ -105,24 +105,39 @@ aria/
 
 ## Status
 
-**Step 0 — done:** module + tree scaffolded; `internal/engagement` implemented
-with `InScope` (CIDR, IPv4/IPv6, exact host, domain wildcard, exclusions) and full
-validation, with unit tests; example engagement and complete web playbook; this
-README and the architecture doc.
+Fonctionnel de bout en bout (recon → profilage → exécution du plan → exploitation
+sous validation humaine → rapport), avec garde-fous appliqués à chaque étape.
 
-Everything else is scaffolded and will be built in this order: sandbox → tool
-registry + `port_scan` → knowledge graph → Planner (recon-only) → Analyst →
-profiler + 2nd playbook → approval tiers + lab exploitation → Reporter/PDF →
-multi-model eval bench → polish/TUI.
+Implémenté : `engagement` (scope + RoE), `sandbox` (Docker durci), outils
+(`port_scan`, `nuclei_scan`, `smb_enum`, `sqli_probe`), `graph`, Planner (recon) +
+Analyst (LLM local Ollama, sorties JSON contraintes), `profiler`, `playbook`
+(chargeur + moteur `when`/plan), exécution autonome par phases, **tiers
+d'approbation** (dry-run + validation humaine), **Reporter** (Markdown/JSON/HTML)
+et **TUI** (dashboard Bubble Tea). Documentation détaillée :
+[`docs/FONCTIONNEMENT.md`](docs/FONCTIONNEMENT.md).
 
-## Try the scope engine
+À venir : banc d'évaluation multi-modèles, journal d'audit rejouable, GIF de démo.
+
+## Try it
 
 ```bash
-go test ./internal/engagement/
-go run ./cmd/aria -engagement examples/engagement.example.yaml
-go run ./cmd/aria -engagement examples/engagement.example.yaml -check 192.168.56.10
+# Contrôle de scope (aucune exécution)
 go run ./cmd/aria -engagement examples/engagement.example.yaml -check 8.8.8.8   # OUT OF SCOPE
+
+# Lab : construire les images, démarrer la cible, lancer une mission
+docker build -t aria/nmap  -f docker/nmap.Dockerfile  docker
+docker build -t aria/nuclei -f docker/nuclei.Dockerfile docker
+docker build -t aria/sqlmap -f docker/sqlmap.Dockerfile docker
+docker compose -f labs/docker-compose.yml up -d
+
+# Mode CLI (recon + exécution autonome + rapport)
+go run ./cmd/aria -engagement examples/engagement.lab.yaml -recon -network aria-lab -report reports
+
+# Mode TUI (interface terminal, modale d'approbation pour l'intrusif)
+go run ./cmd/aria -engagement examples/engagement.lab-exploit.yaml -tui -network aria-lab
 ```
+
+Prérequis mission : Docker et Ollama lancés (`ollama pull qwen3:8b`).
 
 ## License / disclaimer
 
