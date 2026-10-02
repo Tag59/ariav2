@@ -26,6 +26,7 @@ import (
 	"github.com/Tag59/aria/internal/llm"
 	"github.com/Tag59/aria/internal/playbook"
 	"github.com/Tag59/aria/internal/profiler"
+	"github.com/Tag59/aria/internal/report"
 	"github.com/Tag59/aria/internal/sandbox"
 	"github.com/Tag59/aria/internal/tools"
 )
@@ -41,6 +42,7 @@ func main() {
 	sqlmapImage := flag.String("sqlmap-image", "aria/sqlmap:latest", "image conteneur pour sqli_probe")
 	maxSteps := flag.Int("max-steps", 8, "nombre maximum d'actions de reconnaissance")
 	playbooksDir := flag.String("playbooks", "playbooks", "dossier des playbooks")
+	reportDir := flag.String("report", "", "dossier où écrire le rapport (md/json/html) ; vide = pas de rapport")
 	flag.Parse()
 
 	if *engPath == "" {
@@ -69,7 +71,7 @@ func main() {
 
 	// Mode 2 : boucle de reconnaissance.
 	if *recon {
-		if err := lancerRecon(eng, *model, *network, *image, *nucleiImage, *sqlmapImage, *maxSteps, *playbooksDir); err != nil {
+		if err := lancerRecon(eng, *model, *network, *image, *nucleiImage, *sqlmapImage, *maxSteps, *playbooksDir, *reportDir); err != nil {
 			fmt.Fprintf(os.Stderr, "aria : %v\n", err)
 			os.Exit(1)
 		}
@@ -104,7 +106,7 @@ func verifierCible(eng *engagement.Engagement, cible string) {
 }
 
 // lancerRecon assemble tous les composants et exécute la boucle recon + analyse.
-func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir string) error {
+func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir, reportDir string) error {
 	ctx := context.Background()
 
 	// Politique réseau du bac à sable : aucun réseau par défaut (sûr), ou un
@@ -152,7 +154,7 @@ func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage,
 
 	fmt.Println("\n→ Profilage, plan et exécution autonome...")
 	executor := agent.NewExecutor(reg, eng, runner, &approbateurCLI{in: bufio.NewReader(os.Stdin)})
-	profilerPlanifierExecuter(ctx, store, eng, executor, playbooksDir)
+	execSteps := profilerPlanifierExecuter(ctx, store, eng, executor, playbooksDir)
 
 	fmt.Println("\n→ Analyse des services découverts...")
 	analyst := agent.NewAnalyst(client)
@@ -161,14 +163,42 @@ func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage,
 	}
 
 	afficherGraph(store)
+
+	if reportDir != "" {
+		if err := ecrireRapport(eng, store, append(steps, execSteps...), reportDir); err != nil {
+			return fmt.Errorf("rapport : %w", err)
+		}
+	}
+	return nil
+}
+
+// ecrireRapport construit le modèle de rapport et l'écrit (md/json/html).
+func ecrireRapport(eng *engagement.Engagement, store *graph.Store, steps []agent.Step, dir string) error {
+	actions := make([]report.Action, 0, len(steps))
+	for _, s := range steps {
+		statut := s.Status
+		if statut == "" {
+			statut = "exécuté"
+		}
+		actions = append(actions, report.Action{Name: s.Action, Targets: s.Targets, Status: statut})
+	}
+	ecrits, err := report.WriteAll(dir, report.BuildModel(eng, store, actions))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\n→ Rapport écrit :\n")
+	for _, p := range ecrits {
+		fmt.Printf("   %s\n", p)
+	}
 	return nil
 }
 
 // profilerPlanifierExecuter classe chaque hôte, affiche le plan méthodologique
 // applicable (via le playbook recommandé), puis EXÉCUTE automatiquement les steps
 // applicables et outillés (sauf ceux exigeant une approbation).
-func profilerPlanifierExecuter(ctx context.Context, store *graph.Store, eng *engagement.Engagement, executor *agent.Executor, playbooksDir string) {
+func profilerPlanifierExecuter(ctx context.Context, store *graph.Store, eng *engagement.Engagement, executor *agent.Executor, playbooksDir string) []agent.Step {
 	cache := map[string]*playbook.Playbook{}
+	var tous []agent.Step
 	for _, prof := range profiler.ClassifyStore(store) {
 		fmt.Printf("  • %s\n", prof)
 		for _, r := range prof.Reasons {
@@ -223,7 +253,9 @@ func profilerPlanifierExecuter(ctx context.Context, store *graph.Store, eng *eng
 				fmt.Printf("        ✓ %s %v (exit %d)\n", s.Action, s.Targets, s.ExitCode)
 			}
 		}
+		tous = append(tous, steps...)
 	}
+	return tous
 }
 
 // approbateurCLI demande à l'opérateur de valider une action intrusive, en
