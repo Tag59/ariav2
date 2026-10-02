@@ -29,12 +29,14 @@ import (
 	"github.com/Tag59/aria/internal/report"
 	"github.com/Tag59/aria/internal/sandbox"
 	"github.com/Tag59/aria/internal/tools"
+	"github.com/Tag59/aria/internal/tui"
 )
 
 func main() {
 	engPath := flag.String("engagement", "", "chemin vers engagement.yaml (obligatoire)")
 	check := flag.String("check", "", "vérifie si une cible est dans le scope, puis quitte")
 	recon := flag.Bool("recon", false, "lance la boucle de reconnaissance assistée par le LLM")
+	tuiMode := flag.Bool("tui", false, "lance la mission dans l'interface terminal (TUI)")
 	model := flag.String("model", "qwen3:8b", "modèle Ollama à utiliser pour le LLM")
 	network := flag.String("network", "", "réseau Docker isolé pour le scan (ex. aria-lab) ; vide = aucun réseau")
 	image := flag.String("image", "aria/nmap:latest", "image conteneur pour port_scan / smb_enum")
@@ -59,6 +61,15 @@ func main() {
 	if !eng.Authorization.IsActive(time.Now()) {
 		fmt.Fprintln(os.Stderr, "aria : refus de démarrer : la fenêtre d'autorisation n'est pas active actuellement")
 		os.Exit(1)
+	}
+
+	// Mode TUI : interface terminal (ne pas polluer l'écran avant l'altscreen).
+	if *tuiMode {
+		if err := lancerTUI(eng, *model, *network, *image, *nucleiImage, *sqlmapImage, *maxSteps, *playbooksDir, *reportDir); err != nil {
+			fmt.Fprintf(os.Stderr, "aria : %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	afficherEngagement(eng)
@@ -105,28 +116,20 @@ func verifierCible(eng *engagement.Engagement, cible string) {
 	}
 }
 
-// lancerRecon assemble tous les composants et exécute la boucle recon + analyse.
-func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir, reportDir string) error {
-	ctx := context.Background()
-
-	// Politique réseau du bac à sable : aucun réseau par défaut (sûr), ou un
-	// réseau isolé dédié au lab si -network est fourni.
+// construireExecution bâtit le runner (bac à sable Docker) et le registre d'outils
+// à partir des options. Partagé par le mode CLI et le mode TUI.
+func construireExecution(ctx context.Context, network, image, nucleiImage, sqlmapImage string) (sandbox.Runner, *tools.Registry, error) {
 	netPol := sandbox.NetworkPolicy{Mode: sandbox.NetNone}
 	if network != "" {
 		netPol = sandbox.NetworkPolicy{Mode: sandbox.NetIsolated, NetworkName: network}
-	} else {
-		fmt.Println("\n⚠ Aucun -network fourni : le scan n'aura pas d'accès réseau et ne trouvera rien.")
 	}
-
 	runner, err := sandbox.NewDockerRunner(sandbox.DockerConfig{DefaultNetwork: netPol})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if err := runner.Available(ctx); err != nil {
-		return fmt.Errorf("Docker requis pour la reconnaissance : %w", err)
+		return nil, nil, fmt.Errorf("Docker requis : %w", err)
 	}
-
-	// Registre d'outils.
 	reg := tools.NewRegistry()
 	for _, t := range []tools.Tool{
 		tools.NewPortScan(image, netPol),
@@ -135,8 +138,39 @@ func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage,
 		tools.NewSQLiProbe(sqlmapImage, netPol),
 	} {
 		if err := reg.Register(t); err != nil {
-			return err
+			return nil, nil, err
 		}
+	}
+	return runner, reg, nil
+}
+
+// lancerTUI lance la mission dans l'interface terminal.
+func lancerTUI(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir, reportDir string) error {
+	runner, reg, err := construireExecution(context.Background(), network, image, nucleiImage, sqlmapImage)
+	if err != nil {
+		return err
+	}
+	return tui.Run(tui.Config{
+		Eng:          eng,
+		Registry:     reg,
+		Runner:       runner,
+		Client:       llm.NewOllamaClient(model),
+		PlaybooksDir: playbooksDir,
+		MaxSteps:     maxSteps,
+		ReportDir:    reportDir,
+	})
+}
+
+// lancerRecon assemble tous les composants et exécute la boucle recon + analyse.
+func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir, reportDir string) error {
+	ctx := context.Background()
+
+	if network == "" {
+		fmt.Println("\n⚠ Aucun -network fourni : le scan n'aura pas d'accès réseau et ne trouvera rien.")
+	}
+	runner, reg, err := construireExecution(ctx, network, image, nucleiImage, sqlmapImage)
+	if err != nil {
+		return err
 	}
 
 	store := graph.NewStore()
