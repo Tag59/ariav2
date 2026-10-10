@@ -116,7 +116,7 @@ d'approbation** (dry-run + validation humaine), **Reporter** (Markdown/JSON/HTML
 et **TUI** (dashboard Bubble Tea). Documentation détaillée :
 [`docs/FONCTIONNEMENT.md`](docs/FONCTIONNEMENT.md).
 
-À venir : banc d'évaluation multi-modèles, journal d'audit rejouable, GIF de démo.
+Les 7 garde-fous sont en place. À venir : GIF de démonstration.
 
 ## Try it
 
@@ -138,6 +138,23 @@ go run ./cmd/aria -engagement examples/engagement.lab-exploit.yaml -tui -network
 ```
 
 Prérequis mission : Docker et Ollama lancés (`ollama pull qwen3:8b`).
+
+## Cibler ta propre cible
+
+ARIA est agnostique de la cible : copie `examples/engagement.target.yaml`, mets-y
+l'IP de **ta** machine (lab perso, VM, box Hack The Box que *tu* as lancée…), et
+lance la mission. Les outils sont génériques (`sqli_probe` **découvre** lui-même
+les points d'injection via un crawl, plus besoin de pointer un endpoint précis).
+
+```bash
+go run ./cmd/aria -engagement examples/engagement.target.yaml -recon -network aria-lab -report reports
+```
+
+Réseau : un réseau Docker bridge (comme `aria-lab`) route vers l'extérieur via
+l'hôte, donc les conteneurs d'outils atteignent toute IP joignable depuis ta
+machine. Pour une cible derrière un VPN (ex. Hack The Box) sous Windows + Docker
+Desktop, le routage conteneur → VPN peut demander une configuration réseau
+supplémentaire.
 
 ## License / disclaimer
 

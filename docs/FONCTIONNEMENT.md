@@ -149,7 +149,8 @@ aria/
 ├── examples/
 │   ├── engagement.example.yaml # exemple générique
 │   ├── engagement.lab.yaml     # engagement prêt à l'emploi pour le lab local
-│   └── engagement.lab-exploit.yaml # idem, avec exploitation activée (démo approbation)
+│   ├── engagement.lab-exploit.yaml # idem, avec exploitation activée (démo approbation)
+│   └── engagement.target.yaml  # template à remplir pour n'importe quelle cible
 │
 ├── labs/
 │   ├── docker-compose.yml      # Juice Shop sur réseau isolé aria-lab (IP fixe)
@@ -292,7 +293,10 @@ une action — qui échouera ensuite aux étapes 3-4.
   mode de sécurité) ; convertit la sortie des scripts en findings informationnels.
 - **`sqli_probe`** (adapter sqlmap, `exploitation`, `RequiresApproval=true`) :
   confirme une injection SQL en **détection seule** (`--batch`, pas de `--dump`).
-  Ne s'exécute jamais sans validation humaine (voir §6.6, tiers d'approbation).
+  **Générique par défaut** : sans endpoint fourni, sqlmap *découvre* les points
+  d'injection en parcourant le site (`--crawl --forms`) → fonctionne sur n'importe
+  quelle appli web. Un endpoint précis peut être ciblé via `path`/`data` (ex. une
+  API JSON de login). Ne s'exécute jamais sans validation humaine (voir §6.6).
 
 ### 6.4 `graph` — knowledge graph
 
