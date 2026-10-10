@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Tag59/aria/internal/agent"
+	"github.com/Tag59/aria/internal/audit"
 	"github.com/Tag59/aria/internal/engagement"
 	"github.com/Tag59/aria/internal/graph"
 	"github.com/Tag59/aria/internal/llm"
@@ -45,6 +46,7 @@ func main() {
 	maxSteps := flag.Int("max-steps", 8, "nombre maximum d'actions de reconnaissance")
 	playbooksDir := flag.String("playbooks", "playbooks", "dossier des playbooks")
 	reportDir := flag.String("report", "", "dossier où écrire le rapport (md/json/html) ; vide = pas de rapport")
+	auditPath := flag.String("audit", "", "fichier JSONL du journal d'audit (défaut : <report>/audit.jsonl si -report)")
 	flag.Parse()
 
 	if *engPath == "" {
@@ -65,7 +67,7 @@ func main() {
 
 	// Mode TUI : interface terminal (ne pas polluer l'écran avant l'altscreen).
 	if *tuiMode {
-		if err := lancerTUI(eng, *model, *network, *image, *nucleiImage, *sqlmapImage, *maxSteps, *playbooksDir, *reportDir); err != nil {
+		if err := lancerTUI(eng, *model, *network, *image, *nucleiImage, *sqlmapImage, *maxSteps, *playbooksDir, *reportDir, *auditPath); err != nil {
 			fmt.Fprintf(os.Stderr, "aria : %v\n", err)
 			os.Exit(1)
 		}
@@ -82,7 +84,7 @@ func main() {
 
 	// Mode 2 : boucle de reconnaissance.
 	if *recon {
-		if err := lancerRecon(eng, *model, *network, *image, *nucleiImage, *sqlmapImage, *maxSteps, *playbooksDir, *reportDir); err != nil {
+		if err := lancerRecon(eng, *model, *network, *image, *nucleiImage, *sqlmapImage, *maxSteps, *playbooksDir, *reportDir, *auditPath); err != nil {
 			fmt.Fprintf(os.Stderr, "aria : %v\n", err)
 			os.Exit(1)
 		}
@@ -145,11 +147,13 @@ func construireExecution(ctx context.Context, network, image, nucleiImage, sqlma
 }
 
 // lancerTUI lance la mission dans l'interface terminal.
-func lancerTUI(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir, reportDir string) error {
+func lancerTUI(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir, reportDir, auditPath string) error {
 	runner, reg, err := construireExecution(context.Background(), network, image, nucleiImage, sqlmapImage)
 	if err != nil {
 		return err
 	}
+	j, closeJ := ouvrirJournal(auditPath, reportDir)
+	defer closeJ()
 	return tui.Run(tui.Config{
 		Eng:          eng,
 		Registry:     reg,
@@ -158,11 +162,12 @@ func lancerTUI(eng *engagement.Engagement, model, network, image, nucleiImage, s
 		PlaybooksDir: playbooksDir,
 		MaxSteps:     maxSteps,
 		ReportDir:    reportDir,
+		Journal:      j,
 	})
 }
 
 // lancerRecon assemble tous les composants et exécute la boucle recon + analyse.
-func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir, reportDir string) error {
+func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage, sqlmapImage string, maxSteps int, playbooksDir, reportDir, auditPath string) error {
 	ctx := context.Background()
 
 	if network == "" {
@@ -173,13 +178,22 @@ func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage,
 		return err
 	}
 
+	// Journal d'audit (garde-fou n°6) : horodate toute la mission.
+	j, closeJ := ouvrirJournal(auditPath, reportDir)
+	defer closeJ()
+	scopeIn, _ := eng.ScopeStrings()
+	j.MissionStart(eng.Name, scopeIn)
+
 	store := graph.NewStore()
 	client := llm.NewOllamaClient(model)
 
 	fmt.Printf("\n→ Reconnaissance (modèle %s, max %d étapes)...\n", model, maxSteps)
+	j.Phase("Reconnaissance")
 	planner := agent.NewPlanner(client, reg, eng)
+	planner.OnStep = j.Step
 	steps, err := planner.RunRecon(ctx, store, runner, maxSteps)
 	if err != nil {
+		j.Errorf("reconnaissance : %v", err)
 		return fmt.Errorf("reconnaissance : %w", err)
 	}
 	for _, s := range steps {
@@ -187,14 +201,23 @@ func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage,
 	}
 
 	fmt.Println("\n→ Profilage, plan et exécution autonome...")
-	executor := agent.NewExecutor(reg, eng, runner, &approbateurCLI{in: bufio.NewReader(os.Stdin)})
+	j.Phase("Profilage & exécution du plan")
+	executor := agent.NewExecutor(reg, eng, runner, audit.WrapApprover(&approbateurCLI{in: bufio.NewReader(os.Stdin)}, j))
+	executor.OnStep = j.Step
 	execSteps := profilerPlanifierExecuter(ctx, store, eng, executor, playbooksDir)
 
 	fmt.Println("\n→ Analyse des services découverts...")
+	j.Phase("Analyse")
 	analyst := agent.NewAnalyst(client)
 	if err := analyst.AnalyzeStore(ctx, store); err != nil {
+		j.Errorf("analyse : %v", err)
 		return fmt.Errorf("analyse : %w", err)
 	}
+
+	for _, f := range store.Findings() {
+		j.Finding(f)
+	}
+	j.MissionEnd("mission terminée")
 
 	afficherGraph(store)
 
@@ -203,7 +226,41 @@ func lancerRecon(eng *engagement.Engagement, model, network, image, nucleiImage,
 			return fmt.Errorf("rapport : %w", err)
 		}
 	}
+	if p := journalPath(auditPath, reportDir); p != "" {
+		fmt.Printf("\n→ Journal d'audit : %s (%d événements)\n", p, len(j.Events()))
+	}
 	return nil
+}
+
+// journalPath calcule le chemin effectif du journal d'audit.
+func journalPath(auditPath, reportDir string) string {
+	if auditPath != "" {
+		return auditPath
+	}
+	if reportDir != "" {
+		return filepath.Join(reportDir, "audit.jsonl")
+	}
+	return ""
+}
+
+// ouvrirJournal crée le journal d'audit, en écrivant en JSONL au fil de l'eau si
+// un chemin est déterminé (via -audit ou, à défaut, <report>/audit.jsonl). En cas
+// d'échec d'ouverture du fichier, on retombe sur un journal en mémoire (l'audit ne
+// doit jamais bloquer la mission).
+func ouvrirJournal(auditPath, reportDir string) (*audit.Journal, func()) {
+	p := journalPath(auditPath, reportDir)
+	if p == "" {
+		return audit.New(nil), func() {}
+	}
+	if dir := filepath.Dir(p); dir != "" {
+		os.MkdirAll(dir, 0o755)
+	}
+	f, err := os.Create(p)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "aria : journal d'audit indisponible (%v) — journal en mémoire\n", err)
+		return audit.New(nil), func() {}
+	}
+	return audit.New(f), func() { f.Close() }
 }
 
 // ecrireRapport construit le modèle de rapport et l'écrit (md/json/html).

@@ -18,6 +18,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Tag59/aria/internal/agent"
+	"github.com/Tag59/aria/internal/audit"
 	"github.com/Tag59/aria/internal/engagement"
 	"github.com/Tag59/aria/internal/graph"
 	"github.com/Tag59/aria/internal/llm"
@@ -37,19 +38,24 @@ type Config struct {
 	PlaybooksDir string
 	MaxSteps     int
 	ReportDir    string
+	Journal      *audit.Journal
 }
 
 // Run lance l'interface et la mission. Bloque jusqu'à ce que l'opérateur quitte.
 func Run(cfg Config) error {
+	if cfg.Journal == nil {
+		cfg.Journal = audit.New(nil)
+	}
 	store := graph.NewStore()
 	m := model{cfg: cfg, store: store, phase: "Initialisation"}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
-	appr := &approver{p: p}
+	var appr agent.Approver = &approver{p: p}
+	appr = audit.WrapApprover(appr, cfg.Journal) // trace les approbations
 	planner := agent.NewPlanner(cfg.Client, cfg.Registry, cfg.Eng)
-	planner.OnStep = func(s agent.Step) { p.Send(stepMsg(s)) }
+	planner.OnStep = func(s agent.Step) { cfg.Journal.Step(s); p.Send(stepMsg(s)) }
 	executor := agent.NewExecutor(cfg.Registry, cfg.Eng, cfg.Runner, appr)
-	executor.OnStep = func(s agent.Step) { p.Send(stepMsg(s)) }
+	executor.OnStep = func(s agent.Step) { cfg.Journal.Step(s); p.Send(stepMsg(s)) }
 	analyst := agent.NewAnalyst(cfg.Client)
 
 	go runMission(p, cfg, store, planner, executor, analyst)
@@ -84,7 +90,11 @@ func runMission(p *tea.Program, cfg Config, store *graph.Store, planner *agent.P
 	ctx := context.Background()
 	var toutes []agent.Step
 
+	scopeIn, _ := cfg.Eng.ScopeStrings()
+	cfg.Journal.MissionStart(cfg.Eng.Name, scopeIn)
+
 	p.Send(phaseMsg("Reconnaissance"))
+	cfg.Journal.Phase("Reconnaissance")
 	reconSteps, err := planner.RunRecon(ctx, store, cfg.Runner, cfg.MaxSteps)
 	if err != nil {
 		p.Send(doneMsg{err: err})
@@ -94,6 +104,7 @@ func runMission(p *tea.Program, cfg Config, store *graph.Store, planner *agent.P
 	p.Send(refreshMsg{})
 
 	p.Send(phaseMsg("Profilage & exécution du plan"))
+	cfg.Journal.Phase("Profilage & exécution du plan")
 	cache := map[string]*playbook.Playbook{}
 	for _, prof := range profiler.ClassifyStore(store) {
 		p.Send(logMsg("profil : " + prof.String()))
@@ -123,10 +134,16 @@ func runMission(p *tea.Program, cfg Config, store *graph.Store, planner *agent.P
 	}
 
 	p.Send(phaseMsg("Analyse"))
+	cfg.Journal.Phase("Analyse")
 	if err := analyst.AnalyzeStore(ctx, store); err != nil {
 		p.Send(logMsg("analyse : " + err.Error()))
 	}
 	p.Send(refreshMsg{})
+
+	for _, f := range store.Findings() {
+		cfg.Journal.Finding(f)
+	}
+	cfg.Journal.MissionEnd("mission terminée")
 
 	var reports []string
 	if cfg.ReportDir != "" {
