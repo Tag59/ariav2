@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Template d'engagement — à copier et remplir pour TA cible.
+#
+#   ⚠️  UNIQUEMENT sur un système que tu possèdes ou que tu es autorisé PAR ÉCRIT
+#       à tester (ex. ta propre VM, une box Hack The Box que TU as lancée, un lab).
+#
+# 1. Mets l'IP (ou le nom d'hôte) de ta cible dans scope.in.
+# 2. Active les catégories voulues dans rules_of_engagement.
+# 3. Lance :
+#      go run ./cmd/aria -engagement examples/engagement.target.yaml -recon -network aria-lab -report reports
+#    (le réseau aria-lab route vers l'extérieur ; voir docs pour cibler via un VPN)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "Ma mission"
+client: "Moi-même"
+
+authorization:
+  reference: "AUTORISATION-2026-001"     # réf. de ton autorisation (ou lab perso)
+  authorized_by: "Moi-même"
+  signed: true
+  valid_from: "2026-01-01"
+  valid_until: "2026-12-31"
+
+scope:
+  in:
+    - 10.10.11.42          # <-- REMPLACE par l'IP de TA cible
+  # out:
+  #   - 10.10.11.1         # exclusions éventuelles (passerelle, etc.)
+
+rules_of_engagement:
+  allowed_categories:
+    - recon
+    - enumeration
+    - vuln_scan
+    # - exploitation       # décommente pour activer l'intrusif (toujours sous approbation)

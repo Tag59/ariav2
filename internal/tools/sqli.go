@@ -38,8 +38,9 @@ func (s *SQLiProbe) RequiresApproval() bool        { return true }
 
 func (s *SQLiProbe) Description() string {
 	return "Confirmation NON destructive d'une injection SQL (sqlmap, détection seule). " +
-		"Paramètres : target (IP/hôte, obligatoire), port, scheme (http|https), path (défaut /), " +
-		"data (corps POST optionnel, ex. JSON de login)."
+		"Par défaut, DÉCOUVRE les points d'injection en parcourant le site (générique). " +
+		"Paramètres : target (IP/hôte, obligatoire), port, scheme (http|https), crawl (profondeur 0-3), " +
+		"path et data (mode ciblé d'un endpoint connu, ex. JSON de login)."
 }
 
 func (s *SQLiProbe) ParamsSchema() json.RawMessage {
@@ -49,6 +50,7 @@ func (s *SQLiProbe) ParamsSchema() json.RawMessage {
 			"target": {"type": "string"},
 			"port": {"type": "integer"},
 			"scheme": {"type": "string", "enum": ["http", "https"]},
+			"crawl": {"type": "integer"},
 			"path": {"type": "string"},
 			"data": {"type": "string"},
 			"ignore_code": {"type": "integer"}
@@ -111,6 +113,25 @@ func (s *SQLiProbe) Prepare(params map[string]any) (Invocation, error) {
 	if err != nil {
 		return Invocation{}, err
 	}
+	crawl, err := intParam(params, "crawl", 0)
+	if err != nil {
+		return Invocation{}, err
+	}
+
+	// Mode par défaut GÉNÉRIQUE : sans cible précise (racine, pas de corps POST,
+	// pas de crawl explicite), on laisse sqlmap DÉCOUVRIR les points d'injection en
+	// parcourant le site (--crawl --forms). Fournir path/data bascule en mode ciblé
+	// (un endpoint connu, ex. un login). Un crawl profond étant long et bruyant,
+	// on borne la profondeur.
+	if data == "" && path == "/" && crawl == 0 {
+		crawl = 2
+	}
+	if crawl < 0 {
+		crawl = 0
+	}
+	if crawl > 3 {
+		crawl = 3
+	}
 
 	url := fmt.Sprintf("%s://%s:%d%s", scheme, target, port, path)
 
@@ -123,10 +144,13 @@ func (s *SQLiProbe) Prepare(params map[string]any) (Invocation, error) {
 		"--batch", "--level=5", "--risk=3", "--technique=BEU",
 		"--flush-session", "--disable-coloring", "--output-dir=/tmp/sqlmap",
 	}
+	if crawl > 0 {
+		argv = append(argv, fmt.Sprintf("--crawl=%d", crawl), "--forms")
+	}
 	if ignoreCode != 0 {
 		argv = append(argv, fmt.Sprintf("--ignore-code=%d", ignoreCode))
 	}
-	if data != "" {
+	if crawl == 0 && data != "" { // mode ciblé : corps POST (ex. JSON de login)
 		argv = append(argv, "--data", data)
 		if strings.HasPrefix(strings.TrimSpace(data), "{") {
 			argv = append(argv, "--headers", "Content-Type: application/json")

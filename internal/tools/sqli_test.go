@@ -39,6 +39,25 @@ func TestSQLiProbePrepare(t *testing.T) {
 	}
 }
 
+func TestSQLiProbeCrawlGenerique(t *testing.T) {
+	s := NewSQLiProbe("", sandbox.NetworkPolicy{Mode: sandbox.NetNone})
+	// Sans path ni data : mode générique (découverte par crawl).
+	inv, err := s.Prepare(map[string]any{"target": "10.0.0.5"})
+	if err != nil {
+		t.Fatalf("Prepare : %v", err)
+	}
+	got := strings.Join(inv.Spec.Argv, " ")
+	if !strings.Contains(got, "--crawl=2") || !strings.Contains(got, "--forms") {
+		t.Errorf("mode générique attendu (--crawl/--forms) : %q", got)
+	}
+	if !strings.Contains(got, "-u http://10.0.0.5:80/") {
+		t.Errorf("URL racine attendue : %q", got)
+	}
+	if strings.Contains(got, "--data") {
+		t.Error("pas de --data en mode découverte")
+	}
+}
+
 func TestSQLiProbeRejets(t *testing.T) {
 	s := NewSQLiProbe("", sandbox.NetworkPolicy{Mode: sandbox.NetNone})
 	cas := map[string]map[string]any{
