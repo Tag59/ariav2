@@ -45,7 +45,7 @@ Le LLM est **local** (Ollama) : aucune donnée de mission ne quitte la machine.
 | 3 | **RoE** : catégories activables ; interdits durs impossibles | `engagement.RoE` + `hardProhibited` |
 | 4 | **Tiers d'approbation** : recon auto, intrusif validé par l'humain (dry-run) | `agent.Approver` + `Executor` (gating) + `Tool.RequiresApproval` / playbook `requires_approval` |
 | 5 | **Sandbox** : conteneur jetable, réseau limité | `internal/sandbox` (DockerRunner durci) |
-| 6 | **Audit** : journal horodaté rejouable | `internal/audit` (à implémenter avec la boucle) |
+| 6 | **Audit** : journal horodaté rejouable | `internal/audit` (JSONL append-only, branché CLI + TUI) |
 | 7 | **Anti-injection** : sorties cibles = données, pas instructions | parsing dans les adapters + prompts de rôle |
 
 Deux invariants globaux :
@@ -138,7 +138,9 @@ aria/
 │   │   ├── eval.go             #   scénarios Planner/Analyst + métriques
 │   │   ├── render.go           #   tableaux console / Markdown
 │   │   └── eval_test.go
-│   └── audit/                  # ⏳ journal d'audit (placeholder)
+│   └── audit/                  # ✅ journal de mission horodaté (JSONL rejouable)
+│       ├── audit.go            #   Journal, événements, WrapApprover, Render, Load
+│       └── audit_test.go
 │
 ├── playbooks/
 │   ├── web.yaml                # playbook web déclaratif (WSTG/PTES)
@@ -407,6 +409,17 @@ une action — qui échouera ensuite aux étapes 3-4.
   N'exécute aucun outil (il n'évalue que les décisions du LLM) ; il faut juste
   Ollama lancé avec les modèles récupérés.
 
+### 6.13 `audit` — journal de mission (garde-fou n°6)
+
+- **`Journal`** consigne des événements datés et ordonnés (début de mission,
+  phase, step, demande/décision d'approbation, finding, erreur, fin), thread-safe.
+  Écriture **JSONL append-only** au fil de l'eau → relisable et vérifiable
+  (`Load` relit, `Render` produit une chronologie lisible).
+- **`WrapApprover`** enveloppe l'approbateur pour tracer chaque validation
+  (qui a approuvé/refusé quoi, et quand).
+- La CLI et la TUI alimentent le journal (via `OnStep` et le wrapper) et l'écrivent
+  dans `<report>/audit.jsonl` (ou `-audit <fichier>`).
+
 ---
 
 ## 7. Modèle de menace (résumé)
@@ -492,14 +505,13 @@ sqli_probe) · graph · Planner (recon) · Analyst · profiler · playbooks (mot
 `when`/plan) · exécution autonome par phases (Executor) · tiers d'approbation
 (Approver + dry-run) et 1re exploitation gated (sqli_probe) · Reporter
 (Markdown/JSON/HTML) · **TUI (dashboard Bubble Tea + modale d'approbation)** ·
-CLI recon · **banc d'évaluation multi-modèles (ariabench)** · lab. Démo
-bout-en-bout fonctionnelle (recon → profil → plan → nuclei → exploitation sous
-validation humaine → rapport).
+CLI recon · banc d'évaluation multi-modèles (ariabench) · **journal d'audit
+(JSONL rejouable)** · lab. Démo bout-en-bout fonctionnelle (recon → profil → plan
+→ nuclei → exploitation sous validation humaine → rapport + journal d'audit).
 
-**Suite prévue** : GIF de démonstration (capture TUI) ; **journal d'audit**
-(`internal/audit`) branché sur la boucle de l'agent (traçabilité des approbations).
-PDF : impression du HTML pour l'instant ; une génération PDF dédiée (ex. conteneur
-weasyprint) pourra être ajoutée.
+**Les 7 garde-fous sont en place.** Suite envisagée : GIF de démonstration
+(capture TUI) ; `sqli_probe` générique (ne plus cibler Juice Shop en dur) ;
+génération PDF dédiée (le HTML s'imprime en PDF pour l'instant).
 
 **Raffinements connus** : filtrage egress par IP exacte côté hôte (chaîne
 `DOCKER-USER`) ; balayage de sous-réseau vérifié bloc par bloc ; dédoublonnage des
