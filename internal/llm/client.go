@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -43,16 +44,26 @@ type OllamaClient struct {
 
 // NewOllamaClient crée un client pour le modèle donné. L'URL du serveur vient de
 // la variable OLLAMA_HOST si elle est définie, sinon http://localhost:11434.
+// OLLAMA_HOST suit la convention d'Ollama : elle peut être une simple "hôte:port"
+// (sans schéma) — on ajoute alors http:// pour obtenir une URL valide.
 func NewOllamaClient(model string) *OllamaClient {
-	base := os.Getenv("OLLAMA_HOST")
-	if base == "" {
-		base = "http://localhost:11434"
-	}
 	return &OllamaClient{
 		Model:   model,
-		BaseURL: base,
+		BaseURL: baseURLDepuisEnv(os.Getenv("OLLAMA_HOST")),
 		HTTP:    &http.Client{Timeout: 120 * time.Second},
 	}
+}
+
+// baseURLDepuisEnv normalise la valeur d'OLLAMA_HOST en URL http(s) complète.
+func baseURLDepuisEnv(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "http://localhost:11434"
+	}
+	if !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
+		v = "http://" + v
+	}
+	return strings.TrimRight(v, "/")
 }
 
 // --- structures de l'API Ollama (/api/chat) ---
